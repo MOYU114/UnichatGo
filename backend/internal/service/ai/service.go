@@ -1,0 +1,155 @@
+package ai
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"sync"
+	"time"
+
+	"unichatgo/internal/config"
+	"unichatgo/internal/models"
+
+	"github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+)
+
+type aiService struct {
+	aiModel   model.ToolCallingChatModel
+	config    *config.Config
+	histories map[int64][]*models.Message
+	mu        sync.RWMutex
+}
+
+func NewAiService(provider string, modelType string, token string) (*aiService, error) {
+	var chatModel model.ToolCallingChatModel
+	var err error
+	cfgPath := os.Getenv("UNICHATGO_CONFIG")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+
+	switch provider {
+	case "openai":
+		chatModel, err = openai.NewChatModel(context.Background(), &openai.ChatModelConfig{
+			BaseURL: cfg.AI.BaseURL,
+			Model:   modelType,
+			APIKey:  token})
+		cfg.AI.APIToken = token
+		cfg.AI.Model = modelType
+		cfg.AI.Provider = provider
+	default:
+		return nil, fmt.Errorf("invalid provider: %s", provider)
+	}
+	if err != nil {
+		log.Fatalf("Start Ai Service failed: %v", err)
+	}
+	return &aiService{
+		aiModel:   chatModel,
+		config:    cfg,
+		histories: make(map[int64][]*models.Message),
+	}, err
+}
+
+// StreamChat Using stream chat to handle Ai output
+func (s *aiService) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+	if message == nil {
+		return nil, errors.New("message cannot be nil")
+	}
+	if message.SessionID == 0 {
+		return nil, errors.New("session_id is required")
+	}
+	// prime cache with db history when provided
+	if len(prevHistory) > 0 {
+		s.loadHistory(message.SessionID, prevHistory)
+	}
+	// append latest user message
+	s.appendHistory(message.SessionID, message)
+	messagesEino := s.convertMessages(message.SessionID)
+
+	streamReader, err := s.aiModel.Stream(ctx, messagesEino)
+	if err != nil {
+		return nil, fmt.Errorf("generate Ai stream failed: %w", err)
+	}
+	var fullContent string
+	for {
+		chunk, err := streamReader.Recv()
+		if err != nil {
+			// flow finished
+			break
+		}
+		content := chunk.Content
+		fullContent += content
+
+		if callback != nil {
+			if err := callback(fullContent); err != nil {
+				return nil, err
+			}
+		}
+	}
+	response := &models.Message{
+		UserID:    message.UserID,
+		SessionID: message.SessionID,
+		Role:      models.RoleAssistant,
+		Content:   fullContent,
+		CreatedAt: time.Now(),
+	}
+	s.appendHistory(message.SessionID, response)
+	return response, nil
+}
+
+func (s *aiService) convertMessages(sessionID int64) []*schema.Message {
+	s.mu.RLock()
+	history := s.histories[sessionID]
+	s.mu.RUnlock()
+
+	messages := make([]*schema.Message, 0, len(history))
+	for _, msg := range history {
+		var role schema.RoleType
+		switch msg.Role {
+		case models.RoleUser:
+			role = schema.User
+		case models.RoleAssistant:
+			role = schema.Assistant
+		case models.RoleSystem:
+			role = schema.System
+		default:
+			role = schema.User
+		}
+
+		messages = append(messages, &schema.Message{
+			Role:    role,
+			Content: msg.Content,
+		})
+	}
+	return messages
+}
+
+func (s *aiService) loadHistory(sessionID int64, history []*models.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cloned := make([]*models.Message, 0, len(history))
+	for _, msg := range history {
+		if msg == nil {
+			continue
+		}
+		copyMsg := *msg
+		cloned = append(cloned, &copyMsg)
+	}
+	s.histories[sessionID] = cloned
+}
+
+func (s *aiService) appendHistory(sessionID int64, msg *models.Message) {
+	if msg == nil {
+		return
+	}
+	msgCopy := *msg
+	s.mu.Lock()
+	s.histories[sessionID] = append(s.histories[sessionID], &msgCopy)
+	s.mu.Unlock()
+}

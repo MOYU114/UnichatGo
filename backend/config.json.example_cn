@@ -1,0 +1,18 @@
+{
+  "basic_config":{
+    "server_address": ":8080",
+    "database_path": "app.db"
+  },
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-5-nano",
+    "api_key": "",
+    "base_url": "https://api.openai-proxy.com/v1"
+  },
+  "assistant": {
+    "provider": "openai",
+    "model": "gpt-5-nano",
+    "api_key": "",
+    "base_url": "https://api.openai-proxy.com/v1"
+  }
+}

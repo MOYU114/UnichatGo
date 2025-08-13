@@ -1,0 +1,143 @@
+# UnichatGo Backend
+
+Go-based API server that powers user authentication, session management, and streaming AI conversations for Unichat. The backend stores conversations in SQLite, issues auth tokens, and streams assistant output over Server-Sent Events so the UI can render incremental responses while the LLM finishes thinking.
+
+## Features
+- User registration, login, logout, and account deletion with token revocation.
+- API key management per provider (e.g., OpenAI) with validation before invoking AI.
+- Conversation lifecycle: list sessions, start or resume, delete, and auto-generate titles after the first message.
+- Streaming `/conversation/msg` endpoint that emits `ack`, `stream`, `done`, and optional `error` events.
+- SQLite schema and migrations baked into the binary; no external database required by default.
+
+## Directory Structure
+```
+backend/
+├── main.go                  # Entrypoint wiring config, DB, and HTTP router
+├── internal/
+│   ├── api                  # Gin handlers / HTTP surface
+│   ├── auth                 # Token issuance, middleware, helpers
+│   ├── config               # JSON config loader (UNICHATGO_CONFIG)
+│   ├── models               # User / Session / Message structs
+│   ├── service
+│   │   ├── ai               # Streaming AI model adapter
+│   │   └── assistant        # Domain logic for users, sessions, titles
+│   ├── storage              # SQLite open + migrate helpers
+│   └── worker               # Per-user worker managing AI sessions & caching
+├── config.json              # Default configuration (server address, DB path, providers)
+├── app.db                   # SQLite database (auto-created if missing)
+└── test_backend.sh          # Convenience test script
+```
+
+## Prerequisites
+- Go 1.21+
+- SQLite (the Go binary links against `github.com/mattn/go-sqlite3`)
+- Optional: custom config file referenced via `UNICHATGO_CONFIG`. When unset, `config.json` at repo root is used.
+
+Sample minimal config (`config.json`):
+```json
+{
+  "basic": {
+    "server_address": ":8080",
+    "database_path": "app.db"
+  },
+  "assistant": {
+    "provider": "openai",
+    "model": "gpt-5-nano",
+    "base_url": "https://api.openai.com/v1"
+  },
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-5-nano",
+    "base_url": "https://api.openai.com/v1"
+  }
+}
+```
+
+Set environment overrides when needed:
+```bash
+export UNICHATGO_CONFIG=/full/path/to/config.json
+```
+
+## Running Locally
+```bash
+go run ./backend
+```
+The API listens on `basic.server_address` (defaults to `:8080`).
+
+## Testing
+```bash
+go test ./...
+```
+If module downloads are blocked in your environment, populate `GOMODCACHE`/`GOCACHE` locally first or run tests on a networked machine.
+
+## API Quickstart
+Below is an end-to-end example using `curl` (replace placeholders in ALL_CAPS):
+
+```bash
+BASE=http://localhost:8080
+USER_ID=1
+
+# 1. Register
+curl -s -X POST "$BASE/api/users/register" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo","password":"secret"}'
+
+# 2. Login and capture the auth token
+LOGIN=$(curl -s -X POST "$BASE/api/users/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo","password":"secret"}')
+AUTH_TOKEN=$(echo "$LOGIN" | jq -r '.auth_token')
+USER_ID=$(echo "$LOGIN" | jq -r '.id')
+
+# 3. Store your provider API key (required before invoking AI)
+curl -s -X POST "$BASE/api/users/$USER_ID/token" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -d '{"provider":"openai","token":"sk-..."}'
+
+# 4. Start a conversation (session_id=0 creates a new session)
+curl -s -X POST "$BASE/api/users/$USER_ID/conversation/start" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -d '{"provider":"openai","model_type":"gpt-5-nano","session_id":0}'
+
+# 5. Send a message and stream the reply
+curl -N -X POST "$BASE/api/users/$USER_ID/conversation/msg" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -d '{"session_id":SESSION_ID,"provider":"openai","model_type":"gpt-5-nano","content":"Hello"}'
+```
+
+### Streaming Events
+The `/conversation/msg` endpoint responds with Server-Sent Events:
+- `ack`: echoes the stored user message (DB ID, timestamps).
+- `stream`: incremental assistant text chunks (multiple events).
+- `done`: final payload with both user + assistant messages, and `title` if this was the first message in the session.
+- `error`: emitted if the worker fails mid-stream.
+
+Clients should keep the HTTP connection open until `done` or `error` arrives; UI layers can update the session title immediately when it appears in the `done` payload.
+
+## Session Titles
+On the first user message of a session, the worker:
+1. Loads conversation history (initially empty).
+2. Calls the configured assistant model to generate a concise title.
+3. Persists the title via `UpdateSessionTitle` and includes it in the `done` event payload.
+
+Existing sessions keep their stored titles; deleting a session or user automatically cascades related messages and tokens.
+
+## Useful Commands
+Provide a useful `test_backend.sh` to test all the scenario, feel free to use or change it.
+```bash
+# Format code
+go fmt ./...
+
+# Clean module metadata after dependency changes
+go mod tidy
+
+# Run the service
+go run main.go
+
+# Use another bash to run the script
+chmod +x test_backend.sh
+./test_backend.sh
+```
