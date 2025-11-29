@@ -367,6 +367,45 @@ func TestCSRFMiddlewareRejectsMissingHeader(t *testing.T) {
 	assertStatus(t, resp, http.StatusForbidden)
 }
 
+func TestGetSessionMessages(t *testing.T) {
+	router, db, handler := newTestServer(t)
+	defer db.Close()
+	client := newAPITestClient(t, router)
+
+	userID, _ := registerAndLogin(t, client)
+	session, err := handler.assistant.CreateSession(context.Background(), userID, "Test Session")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	msg, err := handler.assistant.AddMessage(context.Background(), models.Message{
+		UserID:    userID,
+		SessionID: session.ID,
+		Role:      models.RoleUser,
+		Content:   "Hello history",
+	})
+	if err != nil {
+		t.Fatalf("add message: %v", err)
+	}
+
+	resp := client.DoJSON(http.MethodGet,
+		fmt.Sprintf("/api/users/%d/conversation/sessions/%d/messages", userID, session.ID),
+		nil,
+		nil,
+	)
+	assertStatus(t, resp, http.StatusOK)
+	var payload struct {
+		Session  models.Session   `json:"session"`
+		Messages []models.Message `json:"messages"`
+	}
+	decodeJSON(t, resp.Body.Bytes(), &payload)
+	if payload.Session.ID != session.ID {
+		t.Fatalf("expected session %d, got %d", session.ID, payload.Session.ID)
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0].ID != msg.ID {
+		t.Fatalf("expected single message in history")
+	}
+}
+
 type sseEvent struct {
 	Name string
 	Data string

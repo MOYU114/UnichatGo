@@ -84,6 +84,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	userRoutes.POST("/conversation/session-list", h.getSessionList)
 	userRoutes.POST("/conversation/start", h.startConversation)
 	userRoutes.DELETE("/conversation/sessions/:session_id", h.deleteSession)
+	userRoutes.GET("/conversation/sessions/:session_id/messages", h.getSessionMessages)
 	userRoutes.POST("/conversation/msg", h.captureInput)
 	userRoutes.POST("/logout", h.logoutUser)
 	userRoutes.DELETE("", h.deleteUser)
@@ -275,6 +276,31 @@ func (h *Handler) deleteUser(c *gin.Context) {
 	}
 	h.clearAuthCookies(c)
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) getSessionMessages(c *gin.Context) {
+	userID, ok := h.authorizedUserID(c)
+	if !ok {
+		return
+	}
+	sessionID, err := strconv.ParseInt(c.Param("session_id"), 10, 64)
+	if err != nil || sessionID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
+		return
+	}
+	session, messages, err := h.assistant.GetSessionWithMessages(c.Request.Context(), userID, sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"session":  session,
+		"messages": messages,
+	})
 }
 
 // User input interface
