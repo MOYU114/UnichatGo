@@ -24,13 +24,14 @@ import (
 func TestHandlersEndToEndFlow(t *testing.T) {
 	router, db, handler := newTestServer(t)
 	defer db.Close()
+	client := newAPITestClient(t, router)
 
 	username := fmt.Sprintf("tester_%d", time.Now().UnixNano())
 	password := "pass123"
 	provider := "openai"
 
 	// Register a user.
-	regResp := doJSONRequest(t, router, http.MethodPost, "/api/users/register", map[string]string{
+	regResp := client.DoJSON(http.MethodPost, "/api/users/register", map[string]string{
 		"username": username,
 		"password": password,
 	}, nil)
@@ -44,7 +45,7 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 	}
 
 	// Login to fetch auth token.
-	loginResp := doJSONRequest(t, router, http.MethodPost, "/api/users/login", map[string]string{
+	loginResp := client.DoJSON(http.MethodPost, "/api/users/login", map[string]string{
 		"username": username,
 		"password": password,
 	}, nil)
@@ -56,20 +57,19 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 	if loginBody.AuthToken == "" {
 		t.Fatalf("expected auth token from login")
 	}
-	authHeader := map[string]string{"Authorization": fmt.Sprintf("Bearer %s", loginBody.AuthToken)}
 
 	// Store provider token.
-	tokenResp := doJSONRequest(t, router, http.MethodPost,
+	tokenResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/token", regBody.ID),
 		map[string]string{"provider": provider, "token": "mock"},
-		authHeader)
+		nil)
 	assertStatus(t, tokenResp, http.StatusNoContent)
 
 	// Start a new conversation (session_id == 0).
-	startResp := doJSONRequest(t, router, http.MethodPost,
+	startResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/start", regBody.ID),
 		map[string]any{"provider": provider, "session_id": 0, "model_type": "gpt-5-nano"},
-		authHeader)
+		nil)
 	assertStatus(t, startResp, http.StatusAccepted)
 	var startBody struct {
 		SessionID int64 `json:"sessionId"`
@@ -80,7 +80,7 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 	}
 
 	firstMessage := "Hello, remember my name is Bob."
-	sendResp := postSSE(t, router,
+	sendResp := client.PostSSE(
 		fmt.Sprintf("/api/users/%d/conversation/msg", regBody.ID),
 		map[string]any{
 			"session_id": startBody.SessionID,
@@ -88,7 +88,7 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 			"provider":   provider,
 			"model_type": "gpt-5-nano",
 		},
-		authHeader,
+		nil,
 	)
 	assertStatus(t, sendResp, http.StatusOK)
 	events := parseSSE(t, sendResp.Body.String())
@@ -130,12 +130,12 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 	}
 
 	// Logout revokes token but keeps session history.
-	logoutResp := doJSONRequest(t, router, http.MethodPost,
-		fmt.Sprintf("/api/users/%d/logout", regBody.ID), nil, authHeader)
+	logoutResp := client.DoJSON(http.MethodPost,
+		fmt.Sprintf("/api/users/%d/logout", regBody.ID), nil, nil)
 	assertStatus(t, logoutResp, http.StatusNoContent)
 
 	// Login again for a new token.
-	loginResp2 := doJSONRequest(t, router, http.MethodPost, "/api/users/login", map[string]string{
+	loginResp2 := client.DoJSON(http.MethodPost, "/api/users/login", map[string]string{
 		"username": username,
 		"password": password,
 	}, nil)
@@ -147,17 +147,16 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 	if loginBody2.AuthToken == "" {
 		t.Fatalf("expected auth token after relogin")
 	}
-	authHeader = map[string]string{"Authorization": fmt.Sprintf("Bearer %s", loginBody2.AuthToken)}
 
 	// Reopen the existing session.
-	reopenResp := doJSONRequest(t, router, http.MethodPost,
+	reopenResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/start", regBody.ID),
 		map[string]any{"provider": provider, "session_id": startBody.SessionID, "model_type": "gpt-5-mini"},
-		authHeader)
+		nil)
 	assertStatus(t, reopenResp, http.StatusAccepted)
 
 	secondMessage := "What was my name?"
-	sendResp2 := postSSE(t, router,
+	sendResp2 := client.PostSSE(
 		fmt.Sprintf("/api/users/%d/conversation/msg", regBody.ID),
 		map[string]any{
 			"session_id": startBody.SessionID,
@@ -165,7 +164,7 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 			"provider":   provider,
 			"model_type": "gpt-5-mini",
 		},
-		authHeader,
+		nil,
 	)
 	assertStatus(t, sendResp2, http.StatusOK)
 	events = parseSSE(t, sendResp2.Body.String())
@@ -179,12 +178,12 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 	}
 
 	// Finally, delete the account.
-	delResp := doJSONRequest(t, router, http.MethodDelete,
-		fmt.Sprintf("/api/users/%d", regBody.ID), nil, authHeader)
+	delResp := client.DoJSON(http.MethodDelete,
+		fmt.Sprintf("/api/users/%d", regBody.ID), nil, nil)
 	assertStatus(t, delResp, http.StatusNoContent)
 
 	// Ensure login now fails.
-	failLogin := doJSONRequest(t, router, http.MethodPost, "/api/users/login", map[string]string{
+	failLogin := client.DoJSON(http.MethodPost, "/api/users/login", map[string]string{
 		"username": username,
 		"password": password,
 	}, nil)
@@ -197,52 +196,34 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 func TestStartConversationValidation(t *testing.T) {
 	router, db, _ := newTestServer(t)
 	defer db.Close()
+	client := newAPITestClient(t, router)
 
-	username := fmt.Sprintf("tester_%d", time.Now().UnixNano())
-	password := "pass123"
-	regResp := doJSONRequest(t, router, http.MethodPost, "/api/users/register", map[string]string{
-		"username": username,
-		"password": password,
-	}, nil)
-	assertStatus(t, regResp, http.StatusCreated)
-	var regBody struct {
-		ID int64 `json:"id"`
-	}
-	decodeJSON(t, regResp.Body.Bytes(), &regBody)
-	loginResp := doJSONRequest(t, router, http.MethodPost, "/api/users/login", map[string]string{
-		"username": username,
-		"password": password,
-	}, nil)
-	assertStatus(t, loginResp, http.StatusOK)
-	var loginBody struct {
-		AuthToken string `json:"auth_token"`
-	}
-	decodeJSON(t, loginResp.Body.Bytes(), &loginBody)
-	authHeader := map[string]string{"Authorization": fmt.Sprintf("Bearer %s", loginBody.AuthToken)}
+	userID, _ := registerAndLogin(t, client)
 
-	resp := doJSONRequest(t, router, http.MethodPost,
-		fmt.Sprintf("/api/users/%d/conversation/start", regBody.ID),
+	resp := client.DoJSON(http.MethodPost,
+		fmt.Sprintf("/api/users/%d/conversation/start", userID),
 		map[string]any{"provider": "", "session_id": 0, "model_type": "gpt-5-nano"},
-		authHeader)
+		nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestStartConversationDuplicateRequests(t *testing.T) {
 	router, db, _ := newTestServer(t)
 	defer db.Close()
+	client := newAPITestClient(t, router)
 
-	userID, authHeader := registerAndLogin(t, router)
-	setTokenResp := doJSONRequest(t, router, http.MethodPost,
+	userID, _ := registerAndLogin(t, client)
+	setTokenResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/token", userID),
 		map[string]string{"provider": "openai", "token": "mock"},
-		authHeader)
+		nil)
 	assertStatus(t, setTokenResp, http.StatusNoContent)
 
 	newSession := func(sessionID int64) int64 {
-		resp := doJSONRequest(t, router, http.MethodPost,
+		resp := client.DoJSON(http.MethodPost,
 			fmt.Sprintf("/api/users/%d/conversation/start", userID),
 			map[string]any{"provider": "openai", "session_id": sessionID, "model_type": "gpt-5-nano"},
-			authHeader)
+			nil)
 		assertStatus(t, resp, http.StatusAccepted)
 		var body struct {
 			SessionID int64 `json:"sessionId"`
@@ -269,18 +250,19 @@ func TestStartConversationDuplicateRequests(t *testing.T) {
 func TestCaptureInputValidation(t *testing.T) {
 	router, db, handler := newTestServer(t)
 	defer db.Close()
+	client := newAPITestClient(t, router)
 
-	userID, authHeader := registerAndLogin(t, router)
-	setTokenResp := doJSONRequest(t, router, http.MethodPost,
+	userID, _ := registerAndLogin(t, client)
+	setTokenResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/token", userID),
 		map[string]string{"provider": "openai", "token": "mock"},
-		authHeader)
+		nil)
 	assertStatus(t, setTokenResp, http.StatusNoContent)
 
-	startResp := doJSONRequest(t, router, http.MethodPost,
+	startResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/start", userID),
 		map[string]any{"provider": "openai", "session_id": 0, "model_type": "gpt-5-nano"},
-		authHeader)
+		nil)
 	assertStatus(t, startResp, http.StatusAccepted)
 	var body struct {
 		SessionID int64 `json:"sessionId"`
@@ -288,17 +270,17 @@ func TestCaptureInputValidation(t *testing.T) {
 	decodeJSON(t, startResp.Body.Bytes(), &body)
 
 	// Missing session id
-	resp := doJSONRequest(t, router, http.MethodPost,
+	resp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/msg", userID),
 		map[string]any{"session_id": 0, "content": "hi", "provider": "openai", "model_type": "gpt"},
-		authHeader)
+		nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 
 	// Empty content
-	resp = doJSONRequest(t, router, http.MethodPost,
+	resp = client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/msg", userID),
 		map[string]any{"session_id": body.SessionID, "content": "   ", "provider": "openai", "model_type": "gpt"},
-		authHeader)
+		nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 
 	_ = handler
@@ -307,12 +289,13 @@ func TestCaptureInputValidation(t *testing.T) {
 func TestStartConversationRequiresToken(t *testing.T) {
 	router, db, _ := newTestServer(t)
 	defer db.Close()
+	client := newAPITestClient(t, router)
 
-	userID, authHeader := registerAndLogin(t, router)
-	resp := doJSONRequest(t, router, http.MethodPost,
+	userID, _ := registerAndLogin(t, client)
+	resp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/start", userID),
 		map[string]any{"provider": "openai", "session_id": 0, "model_type": "gpt"},
-		authHeader)
+		nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	if !strings.Contains(resp.Body.String(), "api token not configured") {
 		t.Fatalf("expected error about missing token, got %s", resp.Body.String())
@@ -322,18 +305,19 @@ func TestStartConversationRequiresToken(t *testing.T) {
 func TestCaptureInputSSEError(t *testing.T) {
 	router, db, handler := newTestServer(t)
 	defer db.Close()
-	userID, authHeader := registerAndLogin(t, router)
+	client := newAPITestClient(t, router)
+	userID, _ := registerAndLogin(t, client)
 
-	setTokenResp := doJSONRequest(t, router, http.MethodPost,
+	setTokenResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/token", userID),
 		map[string]string{"provider": "openai", "token": "mock"},
-		authHeader)
+		nil)
 	assertStatus(t, setTokenResp, http.StatusNoContent)
 
-	startResp := doJSONRequest(t, router, http.MethodPost,
+	startResp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/start", userID),
 		map[string]any{"provider": "openai", "session_id": 0, "model_type": "gpt"},
-		authHeader)
+		nil)
 	assertStatus(t, startResp, http.StatusAccepted)
 	var body struct {
 		SessionID int64 `json:"sessionId"`
@@ -346,7 +330,7 @@ func TestCaptureInputSSEError(t *testing.T) {
 	}
 	mw.streamErr = fmt.Errorf("mock failure")
 
-	resp := postSSE(t, router,
+	resp := client.PostSSE(
 		fmt.Sprintf("/api/users/%d/conversation/msg", userID),
 		map[string]any{
 			"session_id": body.SessionID,
@@ -354,7 +338,7 @@ func TestCaptureInputSSEError(t *testing.T) {
 			"provider":   "openai",
 			"model_type": "gpt",
 		},
-		authHeader,
+		nil,
 	)
 	assertStatus(t, resp, http.StatusOK)
 	events := parseSSE(t, resp.Body.String())
@@ -367,6 +351,20 @@ func TestCaptureInputSSEError(t *testing.T) {
 	if !strings.Contains(events[1].Data, "mock failure") {
 		t.Fatalf("missing error payload: %s", events[1].Data)
 	}
+}
+
+func TestCSRFMiddlewareRejectsMissingHeader(t *testing.T) {
+	router, db, _ := newTestServer(t)
+	defer db.Close()
+	client := newAPITestClient(t, router)
+
+	userID, _ := registerAndLogin(t, client)
+
+	resp := client.DoJSONNoCSRF(http.MethodPost,
+		fmt.Sprintf("/api/users/%d/token", userID),
+		map[string]string{"provider": "openai", "token": "mock"},
+		nil)
+	assertStatus(t, resp, http.StatusForbidden)
 }
 
 type sseEvent struct {
@@ -409,6 +407,7 @@ func parseSSE(t *testing.T, payload string) []sseEvent {
 func newTestServer(t *testing.T) (*gin.Engine, *sql.DB, *Handler) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
+	t.Setenv("UNICHATGO_APIKEY_KEY", strings.Repeat("k", 32))
 
 	db, err := storage.Open(":memory:")
 	if err != nil {
@@ -417,7 +416,10 @@ func newTestServer(t *testing.T) (*gin.Engine, *sql.DB, *Handler) {
 	if err := storage.Migrate(db); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
-	asst := assistant.NewService(db)
+	asst, err := assistant.NewService(db)
+	if err != nil {
+		t.Fatalf("assistant service: %v", err)
+	}
 	authSvc := auth.NewService(db, time.Hour)
 	handler := NewHandler(asst, authSvc)
 	handler.workers = newMockWorker(asst)
@@ -425,29 +427,6 @@ func newTestServer(t *testing.T) (*gin.Engine, *sql.DB, *Handler) {
 	router := gin.New()
 	handler.RegisterRoutes(router)
 	return router, db, handler
-}
-
-func doJSONRequest(t *testing.T, router *gin.Engine, method, path string, body interface{}, headers map[string]string) *httptest.ResponseRecorder {
-	t.Helper()
-	var buf bytes.Buffer
-	if body != nil {
-		if err := json.NewEncoder(&buf).Encode(body); err != nil {
-			t.Fatalf("encode body: %v", err)
-		}
-	}
-	req := httptest.NewRequest(method, path, &buf)
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	return rec
-}
-
-func postSSE(t *testing.T, router *gin.Engine, path string, body interface{}, headers map[string]string) *httptest.ResponseRecorder {
-	t.Helper()
-	return doJSONRequest(t, router, http.MethodPost, path, body, headers)
 }
 
 func decodeJSON(t *testing.T, data []byte, v interface{}) {
@@ -473,11 +452,11 @@ func countMessages(t *testing.T, db *sql.DB, sessionID int64) int {
 	return count
 }
 
-func registerAndLogin(t *testing.T, router *gin.Engine) (int64, map[string]string) {
+func registerAndLogin(t *testing.T, client *apiTestClient) (int64, string) {
 	t.Helper()
 	username := fmt.Sprintf("tester_%d", time.Now().UnixNano())
 	password := "pass123"
-	regResp := doJSONRequest(t, router, http.MethodPost, "/api/users/register", map[string]string{
+	regResp := client.DoJSON(http.MethodPost, "/api/users/register", map[string]string{
 		"username": username,
 		"password": password,
 	}, nil)
@@ -487,7 +466,7 @@ func registerAndLogin(t *testing.T, router *gin.Engine) (int64, map[string]strin
 	}
 	decodeJSON(t, regResp.Body.Bytes(), &regBody)
 
-	loginResp := doJSONRequest(t, router, http.MethodPost, "/api/users/login", map[string]string{
+	loginResp := client.DoJSON(http.MethodPost, "/api/users/login", map[string]string{
 		"username": username,
 		"password": password,
 	}, nil)
@@ -497,10 +476,9 @@ func registerAndLogin(t *testing.T, router *gin.Engine) (int64, map[string]strin
 	}
 	decodeJSON(t, loginResp.Body.Bytes(), &loginBody)
 	if loginBody.AuthToken == "" {
-		t.Fatalf("expected auth token after login")
+		t.Fatalf("expected auth token in login response")
 	}
-	authHeader := map[string]string{"Authorization": fmt.Sprintf("Bearer %s", loginBody.AuthToken)}
-	return regBody.ID, authHeader
+	return regBody.ID, loginBody.AuthToken
 }
 
 type mockWorker struct {
@@ -545,3 +523,87 @@ func (m *mockWorker) Stream(req worker.StreamRequest) (*models.Message, string, 
 
 func (m *mockWorker) Stop(int64)         {}
 func (m *mockWorker) Purge(int64, int64) {}
+
+type apiTestClient struct {
+	t       *testing.T
+	router  *gin.Engine
+	cookies map[string]*http.Cookie
+}
+
+type requestConfig struct {
+	skipCSRF bool
+}
+
+func newAPITestClient(t *testing.T, router *gin.Engine) *apiTestClient {
+	t.Helper()
+	return &apiTestClient{
+		t:       t,
+		router:  router,
+		cookies: make(map[string]*http.Cookie),
+	}
+}
+
+func (c *apiTestClient) DoJSON(method, path string, body interface{}, headers map[string]string) *httptest.ResponseRecorder {
+	return c.doRequest(method, path, body, headers, requestConfig{})
+}
+
+func (c *apiTestClient) DoJSONNoCSRF(method, path string, body interface{}, headers map[string]string) *httptest.ResponseRecorder {
+	return c.doRequest(method, path, body, headers, requestConfig{skipCSRF: true})
+}
+
+func (c *apiTestClient) PostSSE(path string, body interface{}, headers map[string]string) *httptest.ResponseRecorder {
+	return c.doRequest(http.MethodPost, path, body, headers, requestConfig{})
+}
+
+func (c *apiTestClient) doRequest(method, path string, body interface{}, headers map[string]string, cfg requestConfig) *httptest.ResponseRecorder {
+	c.t.Helper()
+	var buf bytes.Buffer
+	if body != nil {
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			c.t.Fatalf("encode body: %v", err)
+		}
+	}
+	req := httptest.NewRequest(method, path, &buf)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for _, ck := range c.cookies {
+		req.AddCookie(ck)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	if !cfg.skipCSRF && needsCSRFAttach(method) {
+		if req.Header.Get("X-CSRF-Token") == "" {
+			if ck, ok := c.cookies["csrf_token"]; ok {
+				req.Header.Set("X-CSRF-Token", ck.Value)
+			}
+		}
+	}
+	rec := httptest.NewRecorder()
+	c.router.ServeHTTP(rec, req)
+	if resp := rec.Result(); resp != nil {
+		c.captureCookies(resp)
+		resp.Body.Close()
+	}
+	return rec
+}
+
+func (c *apiTestClient) captureCookies(resp *http.Response) {
+	for _, ck := range resp.Cookies() {
+		if ck.Value == "" || ck.MaxAge < 0 {
+			delete(c.cookies, ck.Name)
+			continue
+		}
+		c.cookies[ck.Name] = ck
+	}
+}
+
+func needsCSRFAttach(method string) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
+}

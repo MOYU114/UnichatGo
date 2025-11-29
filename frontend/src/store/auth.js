@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { loginUser, registerUser, fetchCurrentUser } from '../api/auth'
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem('au_token') || '')
+  const token = ref('')
   const user = ref(null)
   const loading = ref(false)
   const error = ref('')
@@ -14,19 +14,9 @@ export const useAuthStore = defineStore('auth', () => {
   function setSession(sessionToken, profile) {
     token.value = sessionToken
     user.value = profile
-    if (sessionToken) {
-      localStorage.setItem('au_token', sessionToken)
-    } else {
-      localStorage.removeItem('au_token')
-    }
   }
 
   async function restoreSession() {
-    if (!token.value) {
-      initialised.value = true
-      return
-    }
-
     loading.value = true
     try {
       const profile = await fetchCurrentUser()
@@ -43,8 +33,8 @@ export const useAuthStore = defineStore('auth', () => {
     loading.value = true
     error.value = ''
     try {
-      const { token: sessionToken, user: profile } = await loginUser(credentials)
-      setSession(sessionToken, profile)
+      const { auth_token: sessionToken, username, id } = await loginUser(credentials)
+      setSession(sessionToken, { username, id })
       return true
     } catch (err) {
       error.value =

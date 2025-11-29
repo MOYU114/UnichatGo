@@ -32,7 +32,10 @@ func main() {
 	}
 	//TODO: aiService need to add in the future
 
-	assistantService := assistant.NewService(db)
+	assistantService, err := assistant.NewService(db)
+	if err != nil {
+		log.Fatalf("init assistant service: %v", err)
+	}
 	authService := auth.NewService(db, 24*time.Hour)
 	handlers := api.NewHandler(assistantService, authService)
 

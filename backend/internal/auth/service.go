@@ -12,10 +12,12 @@ import (
 
 // Service issues, validates, and revokes user authentication tokens.
 type Service struct {
-	db         *sql.DB
-	tokenTTL   time.Duration
-	cookieName string
-	headerName string
+	db             *sql.DB
+	tokenTTL       time.Duration
+	cookieName     string
+	headerName     string
+	csrfCookieName string
+	csrfHeaderName string
 }
 
 // NewService constructs an auth service with the supplied token lifetime.
@@ -24,10 +26,12 @@ func NewService(db *sql.DB, ttl time.Duration) *Service {
 		ttl = 24 * time.Hour
 	}
 	return &Service{
-		db:         db,
-		tokenTTL:   ttl,
-		cookieName: "auth_token",
-		headerName: "Authorization",
+		db:             db,
+		tokenTTL:       ttl,
+		cookieName:     "auth_token",
+		headerName:     "Authorization",
+		csrfCookieName: "csrf_token",
+		csrfHeaderName: "X-CSRF-Token",
 	}
 }
 
@@ -52,6 +56,11 @@ func (s *Service) IssueToken(ctx context.Context, userID int64) (string, error) 
 		}
 	}
 	return "", errors.New("could not issue token")
+}
+
+// NewCSRFToken returns a random token used for CSRF protection.
+func (s *Service) NewCSRFToken() (string, error) {
+	return generateToken()
 }
 
 // ValidateToken verifies the token exists and has not expired, returning the user id.
@@ -105,4 +114,24 @@ func generateToken() (string, error) {
 		return "", fmt.Errorf("generate token: %w", err)
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// AuthCookieName returns the cookie name storing auth tokens.
+func (s *Service) AuthCookieName() string {
+	return s.cookieName
+}
+
+// CSRFCookieName returns the cookie used for CSRF tokens.
+func (s *Service) CSRFCookieName() string {
+	return s.csrfCookieName
+}
+
+// CSRFHeaderName returns the CSRF header name.
+func (s *Service) CSRFHeaderName() string {
+	return s.csrfHeaderName
+}
+
+// TokenTTL reports the configured token lifetime.
+func (s *Service) TokenTTL() time.Duration {
+	return s.tokenTTL
 }

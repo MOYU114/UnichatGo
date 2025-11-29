@@ -78,7 +78,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	api.POST("/users/login", h.loginUser)
 	authMW := h.auth.Middleware()
 	userRoutes := api.Group("/users/:id")
-	userRoutes.Use(authMW, h.requirePathUser())
+	userRoutes.Use(authMW, h.requirePathUser(), h.auth.CSRFMiddleware())
 	userRoutes.POST("/token", h.setToken)
 	userRoutes.DELETE("/token", h.deleteToken)
 	userRoutes.POST("/conversation/session-list", h.getSessionList)
@@ -129,6 +129,12 @@ func (h *Handler) loginUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "issue token failed"})
 		return
 	}
+	csrfToken, err := h.auth.NewCSRFToken()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "issue token failed"})
+		return
+	}
+	h.setAuthCookies(c, authToken, csrfToken)
 	c.JSON(http.StatusOK, gin.H{
 		"id":         user.ID,
 		"username":   user.Username,
@@ -245,6 +251,7 @@ func (h *Handler) logoutUser(c *gin.Context) {
 	if authToken, ok := auth.AuthTokenFromContext(c); ok {
 		_ = h.auth.RevokeToken(c.Request.Context(), authToken)
 	}
+	h.clearAuthCookies(c)
 	c.Status(http.StatusNoContent)
 }
 
@@ -266,6 +273,7 @@ func (h *Handler) deleteUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	h.clearAuthCookies(c)
 	c.Status(http.StatusNoContent)
 }
 
@@ -442,4 +450,51 @@ func (h *Handler) deleteToken(c *gin.Context) {
 	}
 	h.workers.Stop(userID)
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) setAuthCookies(c *gin.Context, authToken, csrfToken string) {
+	ttl := int(h.auth.TokenTTL().Seconds())
+	if ttl <= 0 {
+		ttl = 3600
+	}
+	secure := gin.Mode() == gin.ReleaseMode
+	setCookie(c, &http.Cookie{
+		Name:     h.auth.AuthCookieName(),
+		Value:    authToken,
+		MaxAge:   ttl,
+		Path:     "/",
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	setCookie(c, &http.Cookie{
+		Name:     h.auth.CSRFCookieName(),
+		Value:    csrfToken,
+		MaxAge:   ttl,
+		Path:     "/",
+		Secure:   secure,
+		HttpOnly: false,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (h *Handler) clearAuthCookies(c *gin.Context) {
+	for _, name := range []string{h.auth.AuthCookieName(), h.auth.CSRFCookieName()} {
+		setCookie(c, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			MaxAge:   -1,
+			Path:     "/",
+			Secure:   gin.Mode() == gin.ReleaseMode,
+			HttpOnly: name == h.auth.AuthCookieName(),
+			SameSite: http.SameSiteStrictMode,
+		})
+	}
+}
+
+func setCookie(c *gin.Context, ck *http.Cookie) {
+	if ck == nil {
+		return
+	}
+	http.SetCookie(c.Writer, ck)
 }

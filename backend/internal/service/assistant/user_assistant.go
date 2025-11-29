@@ -15,12 +15,17 @@ import (
 
 // Service handles user lifecycle and input persistence.
 type Service struct {
-	db *sql.DB
+	db     *sql.DB
+	cipher *tokenCipher
 }
 
 // NewService builds a new assistant service.
-func NewService(db *sql.DB) *Service {
-	return &Service{db: db}
+func NewService(db *sql.DB) (*Service, error) {
+	cipher, err := newTokenCipherFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return &Service{db: db, cipher: cipher}, nil
 }
 
 // RegisterUser creates a user with the supplied credentials.
@@ -150,18 +155,22 @@ func (s *Service) HasUserToken(ctx context.Context, userID int64, provider strin
 	if provider == "" {
 		return "", errors.New("provider is required")
 	}
-	var token string
+	var stored string
 	err := s.db.QueryRowContext(
 		ctx,
 		`SELECT api_key FROM apiKeys WHERE user_id = ? AND provider = ? LIMIT 1`,
 		userID,
 		provider,
-	).Scan(&token)
+	).Scan(&stored)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
 		return "", fmt.Errorf("lookup api token: %w", err)
+	}
+	token, err := s.decryptToken(stored)
+	if err != nil {
+		return "", fmt.Errorf("decrypt api token: %w", err)
 	}
 	return token, nil
 }
@@ -188,16 +197,47 @@ func (s *Service) SetUserToken(ctx context.Context, userID int64, provider, toke
 		return errors.New("user not found")
 	}
 
-	_, err := s.db.ExecContext(ctx,
+	encrypted, err := s.encryptToken(token)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO apiKeys (user_id, provider, api_key, created_at)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(user_id, provider) DO UPDATE SET api_key = excluded.api_key, created_at = excluded.created_at`,
-		userID, provider, token, time.Now().UTC(),
+		userID, provider, encrypted, time.Now().UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("store token: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) encryptToken(token string) (string, error) {
+	if s.cipher == nil {
+		return token, nil
+	}
+	enc, err := s.cipher.Encrypt(token)
+	if err != nil {
+		return "", fmt.Errorf("encrypt token: %w", err)
+	}
+	return enc, nil
+}
+
+func (s *Service) decryptToken(input string) (string, error) {
+	if s.cipher == nil || input == "" {
+		return input, nil
+	}
+	plain, err := s.cipher.Decrypt(input)
+	if err != nil {
+		if errors.Is(err, errInvalidCiphertext) {
+			// legacy plaintext entry; return as-is
+			return input, nil
+		}
+		return "", err
+	}
+	return plain, nil
 }
 
 // DeleteUserToken removes the stored token for a user/provider pair.

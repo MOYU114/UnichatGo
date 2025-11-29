@@ -4,3 +4,4 @@
 .gomodcache
 .idea
 .gopath
+config.json

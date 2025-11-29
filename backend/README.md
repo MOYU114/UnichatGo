@@ -56,8 +56,8 @@ Sample minimal config (`config.json`):
 Set environment overrides when needed:
 ```bash
 export UNICHATGO_CONFIG=/full/path/to/config.json
+export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)  # 32-byte key used to encrypt provider API tokens
 ```
-
 ## Running Locally
 ```bash
 go run ./backend
