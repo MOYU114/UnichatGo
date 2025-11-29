@@ -183,16 +183,7 @@ func (m *Manager) handleInit(task sessionTask, state *workerState) {
 	var err error
 	var history []*models.Message
 
-	//var titleMsgs []*models.Message
-	//if req.Message != nil {
-	//	titleMsgs = []*models.Message{req.Message}
-	//}
 	if req.SessionID <= 0 {
-		//title, err := as.GenerateTitle(ctx, titleMsgs)
-		//if err != nil {
-		//	state.drainWaiters(pendingID, workerReturn{err: err})
-		//	return
-		//}
 		title := "New Conversation"
 		se, err = m.assistant.CreateSession(ctx, req.UserID, title)
 		if err != nil {
