@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref, watchEffect } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../store/auth'
@@ -10,28 +10,19 @@ const authStore = useAuthStore()
 
 const formRef = ref()
 const form = reactive({
-  email: '',
+  username: '',
   password: '',
 })
 
 const rules = {
-  email: [
-    { required: true, message: '请输入邮箱地址', trigger: 'blur' },
-    { type: 'email', message: '邮箱格式不正确', trigger: ['blur', 'change'] },
-  ],
+  username: [{ required: true, message: 'Username is required', trigger: 'blur' }],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码至少为 6 位', trigger: 'blur' },
+    { required: true, message: 'Password is required', trigger: 'blur' },
+    { min: 6, message: 'Password must be at least 6 characters', trigger: 'blur' },
   ],
 }
 
 const loading = computed(() => authStore.loading)
-
-watchEffect(() => {
-  if (route.query.email && typeof route.query.email === 'string') {
-    form.email = route.query.email
-  }
-})
 
 async function handleSubmit() {
   if (!formRef.value) return
@@ -40,22 +31,19 @@ async function handleSubmit() {
   } catch {
     return
   }
-
   const success = await authStore.login({
-    email: form.email,
+    username: form.username.trim(),
     password: form.password,
   })
-
   if (!success) {
     if (authStore.error) {
       ElMessage.error(authStore.error)
     }
     return
   }
-
   const redirect = route.query.redirect || '/'
   router.replace(redirect)
-  ElMessage.success('登录成功，欢迎回来！')
+  ElMessage.success('Welcome back!')
 }
 
 function goToRegister() {
@@ -67,9 +55,9 @@ function goToRegister() {
   <div class="auth-wrapper">
     <div class="auth-card">
       <div class="auth-header">
-        <img src="/logo.svg" alt="Agent Unity" class="brand-logo" />
-        <h2>欢迎使用 Agent Unity</h2>
-        <p class="sub-title">登录后管理您的多模型 API 调用平台</p>
+        <img src="/logo.svg" alt="UnichatGo" class="brand-logo" />
+        <h2>Sign in to UnichatGo</h2>
+        <p class="sub-title">Securely manage your AI assistants and sessions</p>
       </div>
 
       <el-form
@@ -79,14 +67,13 @@ function goToRegister() {
         size="large"
         label-width="auto"
         class="auth-form"
-        @keyup.enter.native="handleSubmit"
         @keyup.enter="handleSubmit"
       >
-        <el-form-item prop="email">
+        <el-form-item prop="username">
           <el-input
-            v-model="form.email"
-            placeholder="邮箱"
-            autocomplete="email"
+            v-model="form.username"
+            placeholder="Username"
+            autocomplete="username"
           />
         </el-form-item>
 
@@ -95,7 +82,7 @@ function goToRegister() {
             v-model="form.password"
             type="password"
             show-password
-            placeholder="密码"
+            placeholder="Password"
             autocomplete="current-password"
           />
         </el-form-item>
@@ -107,14 +94,14 @@ function goToRegister() {
             :loading="loading"
             @click="handleSubmit"
           >
-            登录
+            Sign In
           </el-button>
         </el-form-item>
       </el-form>
 
       <div class="auth-footer">
-        <span>还没有账号？</span>
-        <el-link type="primary" @click="goToRegister">立即注册</el-link>
+        <span>Need an account?</span>
+        <el-link type="primary" @click="goToRegister">Create one</el-link>
       </div>
     </div>
   </div>

@@ -1,28 +1,49 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { loginUser, registerUser, fetchCurrentUser } from '../api/auth'
+import { loginUser, registerUser, logoutUser, deleteUser } from '../api/users'
+import { listSessions } from '../api/sessions'
+
+const PROFILE_STORAGE_KEY = 'au_profile'
+
+function readStoredProfile() {
+  if (typeof window === 'undefined') return null
+  const raw = localStorage.getItem(PROFILE_STORAGE_KEY)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref('')
-  const user = ref(null)
+  const user = ref(readStoredProfile())
   const loading = ref(false)
   const error = ref('')
   const initialised = ref(false)
 
-  const isAuthenticated = computed(() => Boolean(token.value))
+  const isAuthenticated = computed(() => Boolean(user.value?.id))
 
-  function setSession(sessionToken, profile) {
-    token.value = sessionToken
+  function persistProfile(profile) {
     user.value = profile
+    if (typeof window === 'undefined') return
+    if (profile) {
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile))
+    } else {
+      localStorage.removeItem(PROFILE_STORAGE_KEY)
+    }
   }
 
   async function restoreSession() {
+    if (!user.value) {
+      initialised.value = true
+      return
+    }
     loading.value = true
     try {
-      const profile = await fetchCurrentUser()
-      user.value = profile
+      await listSessions(user.value.id)
     } catch (err) {
-      setSession('', null)
+      persistProfile(null)
     } finally {
       loading.value = false
       initialised.value = true
@@ -33,14 +54,14 @@ export const useAuthStore = defineStore('auth', () => {
     loading.value = true
     error.value = ''
     try {
-      const { auth_token: sessionToken, username, id } = await loginUser(credentials)
-      setSession(sessionToken, { username, id })
+      const data = await loginUser(credentials)
+      persistProfile({ id: data.id, username: data.username })
       return true
     } catch (err) {
       error.value =
-        err?.response?.data?.message ||
+        err?.response?.data?.error ||
         err?.message ||
-        '登录失败，请稍后再试'
+        'Login failed, please try again later'
       return false
     } finally {
       loading.value = false
@@ -55,27 +76,42 @@ export const useAuthStore = defineStore('auth', () => {
       return true
     } catch (err) {
       error.value =
-        err?.response?.data?.message ||
+        err?.response?.data?.error ||
         err?.message ||
-        '注册失败，请稍后再试'
+        'Registration failed, please try again later'
       return false
     } finally {
       loading.value = false
     }
   }
 
-  function logout() {
-    setSession('', null)
+  async function logout() {
+    if (user.value) {
+      try {
+        await logoutUser(user.value.id)
+      } catch {
+        // ignore logout failures
+      }
+    }
+    persistProfile(null)
+  }
+
+  async function removeAccount() {
+    if (!user.value) return
+    try {
+      await deleteUser(user.value.id)
+    } finally {
+      persistProfile(null)
+    }
   }
 
   if (typeof window !== 'undefined') {
     window.addEventListener('au:unauthorized', () => {
-      setSession('', null)
+      persistProfile(null)
     })
   }
 
   return {
-    token,
     user,
     loading,
     error,
@@ -84,7 +120,8 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     register,
     logout,
+    removeAccount,
     restoreSession,
-    setSession,
+    persistProfile,
   }
 })

@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../store/auth'
@@ -9,31 +9,26 @@ const authStore = useAuthStore()
 
 const formRef = ref()
 const form = reactive({
-  name: '',
-  email: '',
+  username: '',
   password: '',
   confirmPassword: '',
 })
 
 const rules = {
-  name: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 2, message: '用户名至少包含 2 个字符', trigger: 'blur' },
-  ],
-  email: [
-    { required: true, message: '请输入邮箱地址', trigger: 'blur' },
-    { type: 'email', message: '邮箱格式不正确', trigger: ['blur', 'change'] },
+  username: [
+    { required: true, message: 'Username is required', trigger: 'blur' },
+    { min: 2, message: 'Username must be at least 2 characters', trigger: 'blur' },
   ],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码至少为 6 位', trigger: 'blur' },
+    { required: true, message: 'Password is required', trigger: 'blur' },
+    { min: 6, message: 'Password must be at least 6 characters', trigger: 'blur' },
   ],
   confirmPassword: [
-    { required: true, message: '请再次输入密码', trigger: 'blur' },
+    { required: true, message: 'Please confirm your password', trigger: 'blur' },
     {
       validator: (_, value, callback) => {
         if (value !== form.password) {
-          callback(new Error('两次输入的密码不一致'))
+          callback(new Error('Passwords do not match'))
           return
         }
         callback()
@@ -42,6 +37,8 @@ const rules = {
     },
   ],
 }
+
+const loading = computed(() => authStore.loading)
 
 async function handleSubmit() {
   if (!formRef.value) return
@@ -52,8 +49,7 @@ async function handleSubmit() {
   }
 
   const success = await authStore.register({
-    name: form.name,
-    email: form.email,
+    username: form.username.trim(),
     password: form.password,
   })
 
@@ -64,8 +60,8 @@ async function handleSubmit() {
     return
   }
 
-  ElMessage.success('注册成功，请登录')
-  router.replace({ name: 'login', query: { email: form.email } })
+  ElMessage.success('Registration successful. Please sign in.')
+  router.replace({ name: 'login' })
 }
 
 function goToLogin() {
@@ -77,9 +73,9 @@ function goToLogin() {
   <div class="auth-wrapper">
     <div class="auth-card">
       <div class="auth-header">
-        <img src="/logo.svg" alt="Agent Unity" class="brand-logo" />
-        <h2>创建你的账户</h2>
-        <p class="sub-title">立即接入多个主流大模型 API</p>
+        <img src="/logo.svg" alt="UnichatGo" class="brand-logo" />
+        <h2>Create your account</h2>
+        <p class="sub-title">Connect to the unified AI workspace</p>
       </div>
 
       <el-form
@@ -91,16 +87,8 @@ function goToLogin() {
         class="auth-form"
         @keyup.enter="handleSubmit"
       >
-        <el-form-item prop="name">
-          <el-input v-model="form.name" placeholder="用户名" autocomplete="name" />
-        </el-form-item>
-
-        <el-form-item prop="email">
-          <el-input
-            v-model="form.email"
-            placeholder="邮箱"
-            autocomplete="email"
-          />
+        <el-form-item prop="username">
+          <el-input v-model="form.username" placeholder="Username" autocomplete="username" />
         </el-form-item>
 
         <el-form-item prop="password">
@@ -108,7 +96,7 @@ function goToLogin() {
             v-model="form.password"
             type="password"
             show-password
-            placeholder="密码"
+            placeholder="Password"
             autocomplete="new-password"
           />
         </el-form-item>
@@ -118,7 +106,7 @@ function goToLogin() {
             v-model="form.confirmPassword"
             type="password"
             show-password
-            placeholder="确认密码"
+            placeholder="Confirm password"
             autocomplete="new-password"
           />
         </el-form-item>
@@ -127,17 +115,17 @@ function goToLogin() {
           <el-button
             type="primary"
             class="full-width"
-            :loading="authStore.loading"
+            :loading="loading"
             @click="handleSubmit"
           >
-            注册
+            Sign Up
           </el-button>
         </el-form-item>
       </el-form>
 
       <div class="auth-footer">
-        <span>已经有账号？</span>
-        <el-link type="primary" @click="goToLogin">返回登录</el-link>
+        <span>Already have an account?</span>
+        <el-link type="primary" @click="goToLogin">Back to login</el-link>
       </div>
     </div>
   </div>

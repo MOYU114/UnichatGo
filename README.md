@@ -1,61 +1,67 @@
 # UnichatGo
 
-UnichatGo is a full-stack conversational assistant platform (backend ready, frontend pending) that lets users register, manage API credentials, and chat with AI providers using streaming responses. The repository is organized with a Go backend (`backend/`) and a placeholder for a Vue-based frontend (`frontend/`).
+UnichatGo is a conversational application powered by a Go backend and a Vue 3 frontend. The backend exposes authenticated REST + SSE endpoints, while the frontend renders streaming responses, manages per-provider tokens, and supports model switching.
 
 ## Repository Layout
 ```
 .
-├── backend/              # Go API server (production ready)
-│   ├── README.md         # Backend-specific documentation
-│   ├── main.go           # Entrypoint wiring config, DB, router
-│   └── internal/...      # Handlers, services, storage, workers
-├── frontend/             # Planned Vue client (not implemented yet)
-├── deploy/               # Future ops/infra artifacts
-├── .env.example          # Sample environment variables (if present)
-└── README.md           # (This file) repository overview
+├── backend/          # Go server (users, sessions, SSE)
+├── frontend/         # Vue 3 + Vite client
+├── deploy/           # Reserved for infra scripts
+└── README.md
 ```
 
-## Backend Overview
-- **Language:** Go 1.21+
-- **Database:** SQLite via `github.com/mattn/go-sqlite3`
-- **Key features:**
-    - User registration/login/logout, account deletion, API key storage per provider
-    - Conversation sessions with auto-generated titles (first user message)
-    - SSE streaming endpoint (`/conversation/msg`) returning `ack`, `stream`, `done`, `error`
-    - Token-based auth middleware and per-user worker orchestration for AI calls
-- **Config:** JSON file loaded via `UNICHATGO_CONFIG` env var (defaults to `backend/config.json`).
-- **Run locally:**
+## Backend Highlights
+- Go 1.21+, SQLite storage.
+- Auth: login issues HttpOnly cookies + CSRF tokens; supports logout and account deletion.
+- Conversations:
+  - `POST /users/:id/conversation/start`: create or resume a session (auto-titles first message).
+  - `POST /users/:id/conversation/msg`: SSE stream returning `ack` → `stream` → `done`/`error`.
+  - `GET /users/:id/conversation/sessions/:session_id/messages`: fetch historical messages.
+- Provider tokens are encrypted using AES-GCM; set `UNICHATGO_APIKEY_KEY` (32-byte key) before running.
+- Run locally:
   ```bash
   cd backend
+  export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
   go run ./
   ```
-- **Tests:** `go test ./...` (requires network access to download modules the first time).
+- Tests: `cd backend && go test ./...` (requires network to fetch modules on first run).
 
-Refer to `backend/README.md` for detailed API workflows, curl examples, and streaming event descriptions.
+See `backend/README.md` for detailed API walkthroughs and curl examples.
 
-## Frontend Status
-- The `frontend/` folder is reserved for a Vue 3 application that will consume the backend APIs and render streaming responses.
-- No implementation is committed yet; recommended stack: Vite + Vue 3 + TypeScript, with SSE handling for `/conversation/msg`.
-- When starting the frontend, ensure CORS or reverse-proxy settings align with the backend server (`:8080` by default).
+## Frontend Highlights
+- Built with Vue 3, Pinia, Element Plus, Vite.
+- Axios client uses Cookies + CSRF header automatically; SSE via `fetch` + ReadableStream.
+- Features:
+  - Authentication-aware layout (login/register/dashboard).
+  - Session sidebar, chat panel with Markdown rendering, provider/model dropdowns.
+  - Token dialog accessible from the user menu; tokens stored per provider.
+  - Provider/model metadata lives in `src/store/session.js` (`PROVIDERS` mapping); extend as needed.
+- Development:
+  ```bash
+  cd frontend
+  npm install
+  npm run dev   # Vite dev server with /api proxy -> http://localhost:8080
+  ```
+- Build: `npm run build`.
 
-## Development Workflow
-1. **Start backend:** `go run ./backend` and verify SQLite DB (default `backend/app.db`).
-2. **Prepare frontend (future):** scaffold a Vue app under `frontend/`, configure `.env` to point to backend API.
-3. **Testing:**
-    - Backend: `cd backend && go test ./...`
-    - Frontend: run lint/unit tests once implemented (e.g., `npm run test`).
-4. **Environment variables:**
-    - `UNICHATGO_CONFIG` – path to backend config file.
-    - Additional `.env` keys for the frontend will be documented once implemented.
+## Common Commands
+| Task | Command |
+|------|---------|
+| Start backend | `cd backend && export UNICHATGO_APIKEY_KEY=... && go run ./` |
+| Backend tests | `cd backend && go test ./...` |
+| Frontend dev  | `cd frontend && npm install && npm run dev` |
+| Frontend build | `npm run build` |
 
-## Planned Improvements
-- Build the Vue frontend with authenticated session management, conversation list view, and streaming chat UI.
-- Add deployment manifests/scripts under `deploy/` (Docker, Kubernetes, etc.).
-- Extend backend tests for additional routes and add integration tests once the frontend is available.
+## Environment Variables
+- `UNICHATGO_CONFIG`: Optional path to backend config JSON (defaults to `backend/config.json`).
+- `UNICHATGO_APIKEY_KEY`: **Required** 32-byte key for encrypting provider tokens.
+- `VITE_API_BASE_URL`: Frontend override for API endpoint (defaults to `/api` and proxied to `http://localhost:8080` during development).
 
-## Reference
-- [eino](https://github.com/cloudwego/eino)
-- [Gochat](https://github.com/wangle201210/gochat/tree/main)
+## References
+- [cloudwego/eino](https://github.com/cloudwego/eino)
+- [wangle201210/gochat](https://github.com/wangle201210/gochat/tree/main)
 
----
-For backend details, see `backend/README.md`. When the frontend comes online, add its own README inside `frontend/` and update this overview accordingly.
+Will add `/deploy` later.
+
+***Feel free to add new providers/models, or customize the UI. Contributions are welcome!***

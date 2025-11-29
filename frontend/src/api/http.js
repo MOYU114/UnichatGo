@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getCSRFCookie } from '../utils/csrf'
 
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
@@ -9,7 +10,7 @@ const http = axios.create({
 http.interceptors.request.use((config) => {
   const method = (config.method || 'get').toLowerCase()
   if (!['get', 'head', 'options'].includes(method)) {
-    const csrfToken = getCookie('csrf_token')
+    const csrfToken = getCSRFCookie()
     if (csrfToken) {
       // eslint-disable-next-line no-param-reassign
       config.headers['X-CSRF-Token'] = csrfToken
@@ -29,11 +30,5 @@ http.interceptors.response.use(
     return Promise.reject(error)
   },
 )
-
-function getCookie(name) {
-  if (typeof document === 'undefined') return ''
-  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
-  return match ? decodeURIComponent(match[1]) : ''
-}
 
 export default http
