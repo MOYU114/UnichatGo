@@ -2,6 +2,27 @@
 
 UnichatGo is a conversational application powered by a Go backend and a Vue 3 frontend. The backend exposes authenticated REST + SSE endpoints, while the frontend renders streaming responses, manages per-provider tokens, and supports model switching.
 
+## Quick Start
+- Backend (local):
+  ```bash
+  cd backend
+  export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
+  go run ./
+  ```
+- Frontend (local):
+  ```bash
+  cd frontend
+  npm install
+  npm run dev
+  ```
+- Docker Compose (with persisted DB):
+  ```bash
+  mkdir -p backend/data
+  export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
+  docker compose up --build
+  ```
+- Tear down containers: `docker compose down`
+
 ## Repository Layout
 ```
 .
@@ -26,6 +47,7 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
   go run ./
   ```
 - Tests: `cd backend && go test ./...` (requires network to fetch modules on first run).
+- SQLite path: `./data/app.db` by default (see `backend/config.json`). Mount `backend/data` when running in Docker.
 
 See `backend/README.md` for detailed API walkthroughs and curl examples.
 
@@ -52,6 +74,9 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 | Backend tests | `cd backend && go test ./...` |
 | Frontend dev  | `cd frontend && npm install && npm run dev` |
 | Frontend build | `npm run build` |
+| Docker compose (first time) | `export UNICHATGO_APIKEY_KEY=... && docker compose up --build` |
+| Docker compose (after init) | `docker compose up` |
+| Clean up | `docker compose down` |
 
 ## Environment Variables
 - `UNICHATGO_CONFIG`: Optional path to backend config JSON (defaults to `backend/config.json`).

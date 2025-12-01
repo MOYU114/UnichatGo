@@ -1,7 +1,7 @@
 {
   "basic_config":{
     "server_address": ":8080",
-    "database_path": "app.db"
+    "database_path": "./data/app.db"
   },
   "ai": {
     "provider": "openai",

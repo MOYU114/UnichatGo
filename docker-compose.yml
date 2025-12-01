@@ -1,0 +1,21 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - UNICHATGO_APIKEY_KEY=${UNICHATGO_APIKEY_KEY}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/data:/app/data
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - VITE_API_BASE_URL=/api
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
