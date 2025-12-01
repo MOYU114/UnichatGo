@@ -1,0 +1,29 @@
+name: CI/CD
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Backend Tests
+        run: cd backend && go test ./...
+
+      - name: Frontend Build
+        run: cd frontend && npm install && npm run build
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          script: |
+            export UNICHATGO_APIKEY_KEY='${{ secrets.UNICHATGO_APIKEY_KEY }}'
+            cd ~/UnichatGo
+            docker compose pull
+            docker compose up -d --force-recreate 
