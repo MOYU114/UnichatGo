@@ -19,7 +19,7 @@ npm run preview     # preview build
 
 ## Environment
 - `VITE_API_BASE_URL` (optional): override API base URL (default `/api`).
-  In Docker, Nginx proxies `/api` to `host.docker.internal:8090` by default (configurable via `frontend/nginx.conf`).
+  In Docker, Nginx proxies `/api` to `backend:8090` by default (configurable via `frontend/nginx.conf`).
 
 ## Notes
 - Provider/model presets defined in `src/store/session.js` (`PROVIDERS`). Update as needed.

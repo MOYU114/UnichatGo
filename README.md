@@ -17,7 +17,6 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
   ```
 - Docker Compose (with persisted DB):
   ```bash
-  mkdir -p backend/data
   export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
   docker compose up --build
   ```

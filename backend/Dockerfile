@@ -20,7 +20,7 @@ COPY --from=builder /app/unichatgo .
 #COPY config.json.example_cn ./config.json
 # For Global
 COPY config.json.example ./config.json
-RUN chown -R unichat:unichat /app
+RUN mkdir -p /app/data && chown -R unichat:unichat /app
 USER unichat
 
 ENV UNICHATGO_CONFIG=/app/config.json

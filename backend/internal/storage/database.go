@@ -10,7 +10,7 @@ import (
 // Open connects to the SQLite database at the provided path.
 func Open(path string) (*sql.DB, error) {
 	if path == "" {
-		path = "app.db"
+		path = "./data/app.db"
 	}
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
