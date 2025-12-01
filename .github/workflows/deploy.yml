@@ -25,5 +25,5 @@ jobs:
           script: |
             export UNICHATGO_APIKEY_KEY='${{ secrets.UNICHATGO_APIKEY_KEY }}'
             cd ~/UnichatGo
-            docker compose pull
+            git pull
             docker compose up -d --force-recreate 
