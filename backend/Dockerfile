@@ -11,8 +11,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o unichatgo
 
 # Use debian 12 slim
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 10001 unichat
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/unichatgo .
@@ -20,8 +19,7 @@ COPY --from=builder /app/unichatgo .
 #COPY config.json.example_cn ./config.json
 # For Global
 COPY config.json.example ./config.json
-RUN mkdir -p /app/data && chown -R unichat:unichat /app
-USER unichat
+RUN mkdir -p /app/data
 
 ENV UNICHATGO_CONFIG=/app/config.json
 EXPOSE 8090
