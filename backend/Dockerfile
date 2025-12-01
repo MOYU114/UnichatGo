@@ -19,7 +19,7 @@ COPY --from=builder /app/unichatgo .
 # For China mainland
 #COPY config.json.example_cn ./config.json
 # For Global
-COPY backend/config.json.example ./config.json
+COPY config.json.example ./config.json
 RUN chown -R unichat:unichat /app
 USER unichat
 
