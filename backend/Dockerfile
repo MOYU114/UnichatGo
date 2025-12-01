@@ -24,5 +24,5 @@ RUN chown -R unichat:unichat /app
 USER unichat
 
 ENV UNICHATGO_CONFIG=/app/config.json
-EXPOSE 8080
+EXPOSE 8090
 CMD ["./unichatgo"]

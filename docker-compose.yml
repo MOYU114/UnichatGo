@@ -6,7 +6,7 @@ services:
     environment:
       - UNICHATGO_APIKEY_KEY=${UNICHATGO_APIKEY_KEY}
     ports:
-      - "8080:8080"
+      - "8090:8090"
     volumes:
       - ./backend/data:/app/data
   frontend:

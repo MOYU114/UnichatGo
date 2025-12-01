@@ -1,6 +1,6 @@
 {
   "basic_config":{
-    "server_address": ":8080",
+    "server_address": ":8090",
     "database_path": "./data/app.db"
   },
   "ai": {

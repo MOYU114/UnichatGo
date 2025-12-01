@@ -63,7 +63,7 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
   ```bash
   cd frontend
   npm install
-  npm run dev   # Vite dev server with /api proxy -> http://localhost:8080
+  npm run dev   # Vite dev server with /api proxy -> http://localhost:8090
   ```
 - Build: `npm run build`.
 
@@ -81,7 +81,7 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 ## Environment Variables
 - `UNICHATGO_CONFIG`: Optional path to backend config JSON (defaults to `backend/config.json`).
 - `UNICHATGO_APIKEY_KEY`: **Required** 32-byte key for encrypting provider tokens.
-- `VITE_API_BASE_URL`: Frontend override for API endpoint (defaults to `/api` and proxied to `http://localhost:8080` during development).
+- `VITE_API_BASE_URL`: Frontend override for API endpoint (defaults to `/api` and proxied to `http://localhost:8090` during development).
 
 ## References
 - [cloudwego/eino](https://github.com/cloudwego/eino)

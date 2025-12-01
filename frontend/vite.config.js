@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const API_TARGET = process.env.VITE_API_BASE_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'
+const API_TARGET = process.env.VITE_API_BASE_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8090'
 
 export default defineConfig({
   plugins: [vue()],

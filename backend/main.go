@@ -44,7 +44,7 @@ func main() {
 
 	addr := cfg.BasicConfig.ServerAddress
 	if addr == "" {
-		addr = ":8080"
+		addr = ":8090"
 	}
 
 	if err := router.Run(addr); err != nil {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="http://localhost:8080/api"
+BASE_URL="http://localhost:8090/api"
 USERNAME="tester_$(date +%s)"
 PASSWORD="pass123"
 PROVIDER="openai"

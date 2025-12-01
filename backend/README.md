@@ -37,7 +37,7 @@ Sample minimal config (`config.json`):
 ```json
 {
   "basic": {
-    "server_address": ":8080",
+    "server_address": ":8090",
     "database_path": "app.db"
   },
   "assistant": {
@@ -62,7 +62,7 @@ export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)  # 32-byte key used to en
 ```bash
 go run ./backend
 ```
-The API listens on `basic.server_address` (defaults to `:8080`).
+The API listens on `basic.server_address` (defaults to `:8090`).
 
 ## Testing
 ```bash
@@ -74,7 +74,7 @@ If module downloads are blocked in your environment, populate `GOMODCACHE`/`GOCA
 Below is an end-to-end example using `curl` (replace placeholders in ALL_CAPS):
 
 ```bash
-BASE=http://localhost:8080
+BASE=http://localhost:8090
 USER_ID=1
 
 # 1. Register
