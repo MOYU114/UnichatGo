@@ -9,22 +9,14 @@ import (
 
 // Config represents runtime configuration for the service.
 type Config struct {
-	AI          AIConfig        `json:"ai"`
-	Assistant   AssistantConfig `json:"assistant"`
-	BasicConfig BasicConfig     `json:"basic_config"`
+	BasicConfig BasicConfig               `json:"basic_config"`
+	Providers   map[string]ProviderConfig `json:"providers"`
 }
 
-type AIConfig struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"base_url"`
-	APIToken string `json:"api_token"`
-}
-type AssistantConfig struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"base_url"`
-	APIToken string `json:"api_token"`
+type ProviderConfig struct {
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	APIKey  string `json:"api_key"`
 }
 
 type BasicConfig struct {

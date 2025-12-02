@@ -1,6 +1,6 @@
 # UnichatGo
 
-UnichatGo is a conversational application powered by a Go backend and a Vue 3 frontend. The backend exposes authenticated REST + SSE endpoints, while the frontend renders streaming responses, manages per-provider tokens, and supports model switching.
+UnichatGo is a conversational application powered by a Go backend and a Vue 3 frontend. The backend exposes authenticated REST + SSE endpoints with built-in OpenAI/Gemini/Claude provider support, while the frontend renders streaming responses, manages per-provider tokens, and supports model switching.
 
 ## Quick Start
 - Backend (local):
@@ -54,10 +54,10 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 - Built with Vue 3, Pinia, Element Plus, Vite.
 - Axios client uses Cookies + CSRF header automatically; SSE via `fetch` + ReadableStream.
 - Features:
-  - Authentication-aware layout (login/register/dashboard).
-  - Session sidebar, chat panel with Markdown rendering, provider/model dropdowns.
-  - Token dialog accessible from the user menu; tokens stored per provider.
-  - Provider/model metadata lives in `src/store/session.js` (`PROVIDERS` mapping); extend as needed.
+	- Authentication-aware layout (login/register/dashboard).
+	- Session sidebar, chat panel with Markdown rendering, provider/model dropdowns.
+	- Token dialog accessible from the user menu; tokens stored per provider.
+	- Provide openai/gemini/claude API interface.
 - Development:
   ```bash
   cd frontend
@@ -86,6 +86,5 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 - [cloudwego/eino](https://github.com/cloudwego/eino)
 - [wangle201210/gochat](https://github.com/wangle201210/gochat/tree/main)
 
-Will add `/deploy` later.
 
 ***Feel free to add new providers/models, or customize the UI. Contributions are welcome!***

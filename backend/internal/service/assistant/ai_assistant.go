@@ -6,9 +6,12 @@ import (
 	"log"
 	"os"
 
+	"github.com/cloudwego/eino-ext/components/model/claude"
+	"github.com/cloudwego/eino-ext/components/model/gemini"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"google.golang.org/genai"
 
 	"unichatgo/internal/config"
 	"unichatgo/internal/models"
@@ -16,10 +19,9 @@ import (
 
 type assistantService struct {
 	chatModel model.ToolCallingChatModel
-	config    config.AssistantConfig
 }
 
-func NewAssistantService(token string) (*assistantService, error) {
+func NewAssistantService(provider, modelName, token string) (*assistantService, error) {
 	var chatModel model.ToolCallingChatModel
 	var err error
 
@@ -28,23 +30,54 @@ func NewAssistantService(token string) (*assistantService, error) {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	provCfg, ok := cfg.Providers[provider]
+	if !ok {
+		log.Fatalf("unknown provider: %s", provider)
+	}
+	if modelName == "" {
+		modelName = provCfg.Model
+	}
 
-	switch cfg.Assistant.Provider {
+	switch provider {
 	case "openai":
 		chatModel, err = openai.NewChatModel(context.Background(), &openai.ChatModelConfig{
-			BaseURL: cfg.Assistant.BaseURL,
-			Model:   cfg.Assistant.Model,
+			BaseURL: provCfg.BaseURL,
+			Model:   modelName,
 			APIKey:  token})
-		cfg.Assistant.APIToken = token
+	case "gemini":
+		client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+			APIKey: token,
+		})
+		if err != nil {
+			log.Fatalf("NewClient of gemini failed, err=%v", err)
+		}
+		chatModel, err = gemini.NewChatModel(context.Background(), &gemini.Config{
+			Client: client,
+			Model:  modelName,
+			ThinkingConfig: &genai.ThinkingConfig{
+				IncludeThoughts: true,
+				ThinkingBudget:  nil,
+			},
+		})
+	case "claude":
+		var baseURLPtr *string
+		if provCfg.BaseURL != "" {
+			baseURLPtr = &provCfg.BaseURL
+		}
+		chatModel, err = claude.NewChatModel(context.Background(), &claude.Config{
+			APIKey:    token,
+			Model:     modelName,
+			BaseURL:   baseURLPtr,
+			MaxTokens: 3000,
+		})
 	default:
-		log.Fatalf("unknown provider: %s", cfg.Assistant.Provider)
+		log.Fatalf("unknown provider: %s", provider)
 	}
 	if err != nil {
 		log.Fatalf("Init assistant failed: %v", err)
 	}
 	return &assistantService{
 		chatModel: chatModel,
-		config:    cfg.Assistant,
 	}, nil
 }
 

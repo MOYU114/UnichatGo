@@ -12,9 +12,12 @@ import (
 	"unichatgo/internal/config"
 	"unichatgo/internal/models"
 
+	"github.com/cloudwego/eino-ext/components/model/claude"
+	"github.com/cloudwego/eino-ext/components/model/gemini"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"google.golang.org/genai"
 )
 
 type aiService struct {
@@ -32,16 +35,46 @@ func NewAiService(provider string, modelType string, token string) (*aiService, 
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	provCfg, ok := cfg.Providers[provider]
+	if !ok {
+		return nil, fmt.Errorf("provider %s not configured", provider)
+	}
+	if modelType == "" {
+		modelType = provCfg.Model
+	}
 
 	switch provider {
 	case "openai":
 		chatModel, err = openai.NewChatModel(context.Background(), &openai.ChatModelConfig{
-			BaseURL: cfg.AI.BaseURL,
+			BaseURL: provCfg.BaseURL,
 			Model:   modelType,
 			APIKey:  token})
-		cfg.AI.APIToken = token
-		cfg.AI.Model = modelType
-		cfg.AI.Provider = provider
+	case "gemini":
+		client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+			APIKey: token,
+		})
+		if err != nil {
+			log.Fatalf("NewClient of gemini failed, err=%v", err)
+		}
+		chatModel, err = gemini.NewChatModel(context.Background(), &gemini.Config{
+			Client: client,
+			Model:  modelType,
+			ThinkingConfig: &genai.ThinkingConfig{
+				IncludeThoughts: true,
+				ThinkingBudget:  nil,
+			},
+		})
+	case "claude":
+		var baseURLPtr *string
+		if provCfg.BaseURL != "" {
+			baseURLPtr = &provCfg.BaseURL
+		}
+		chatModel, err = claude.NewChatModel(context.Background(), &claude.Config{
+			APIKey:    token,
+			Model:     modelType,
+			BaseURL:   baseURLPtr,
+			MaxTokens: 3000,
+		})
 	default:
 		return nil, fmt.Errorf("invalid provider: %s", provider)
 	}

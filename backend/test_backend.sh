@@ -62,7 +62,7 @@ for msg in "${sentences[@]}"; do
 done
 
 echo "Conversation history for session $session_id:"
-sqlite3 app.db "SELECT role,content FROM messages WHERE session_id=$session_id ORDER BY id;"
+sqlite3 data/app.db "SELECT role,content FROM messages WHERE session_id=$session_id ORDER BY id;"
 
 resp=$(req POST "/users/$user_id/logout" "" "${CSRF_HEADER[@]}")
 echo "Logout status: $resp"
@@ -77,7 +77,7 @@ req POST "/users/$user_id/conversation/start" "{\"provider\":\"$PROVIDER\",\"ses
 send_msg "What was our last conversation?"
 
 echo "Conversation history after re-login:"
-sqlite3 app.db "SELECT role,content FROM messages WHERE session_id=$session_id ORDER BY id;"
+sqlite3 data/app.db "SELECT role,content FROM messages WHERE session_id=$session_id ORDER BY id;"
 
 req DELETE "/users/$user_id" "" "${CSRF_HEADER[@]}"
 

@@ -41,7 +41,14 @@ async function handleSave() {
   >
     <el-form label-position="top">
       <el-form-item label="Provider">
-        <el-input v-model="form.provider" disabled />
+        <el-select v-model="form.provider" placeholder="Select provider">
+          <el-option
+            v-for="(models, key) in sessionStore.providers"
+            :key="key"
+            :label="key"
+            :value="key"
+          />
+        </el-select>
       </el-form-item>
       <el-form-item label="API token">
         <el-input

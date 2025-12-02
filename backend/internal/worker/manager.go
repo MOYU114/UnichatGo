@@ -306,7 +306,7 @@ func (m *Manager) ensureResources(state *workerState, req SessionRequest) (*sess
 	if err != nil {
 		return nil, err
 	}
-	asSvc, err := assistant.NewAssistantService(req.Token)
+	asSvc, err := assistant.NewAssistantService(req.Provider, req.Model, req.Token)
 	if err != nil {
 		return nil, err
 	}

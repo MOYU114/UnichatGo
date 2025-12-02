@@ -12,7 +12,8 @@ import { useAuthStore } from './auth'
 
 const PROVIDERS = {
   openai: ['gpt-5-nano', 'gpt-5-mini', 'gpt-4o-mini'],
-  anthropic: ['claude-3-5-sonnet', 'claude-3-haiku'],
+  gemini: ['gemini-3-pro-preview','gemini-2.5-flash', 'gemini-2.5-flash-lite','gemini-2.5-pro'],
+  claude: ['claude-sonnet-4-5', 'claude-haiku-4-5','claude-opus-4-5','claude-opus-4-1'],
 }
 
 function normalizeSession(session) {

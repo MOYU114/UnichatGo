@@ -3,16 +3,21 @@
     "server_address": ":8090",
     "database_path": "./data/app.db"
   },
-  "ai": {
-    "provider": "openai",
-    "model": "gpt-5-nano",
-    "api_key": "",
-    "base_url": "https://api.openai-proxy.com/v1"
-  },
-  "assistant": {
-    "provider": "openai",
-    "model": "gpt-5-nano",
-    "api_key": "",
-    "base_url": "https://api.openai-proxy.com/v1"
+  "providers": {
+    "openai": {
+      "model": "gpt-5-nano",
+      "api_key": "",
+      "base_url": "https://api.openai-proxy.com/v1"
+    },
+    "gemini": {
+      "model": "gemini-2.5-flash",
+      "api_key": "",
+      "base_url": ""
+    },
+    "claude": {
+      "model": "claude-haiku-4-5",
+      "api_key": "",
+      "base_url": "https://claude.nekro.ai"
+    }
   }
 }
