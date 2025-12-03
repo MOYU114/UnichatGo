@@ -1,5 +1,6 @@
 *.db
 .env
+.cache
 .gocache
 .gomodcache
 .idea

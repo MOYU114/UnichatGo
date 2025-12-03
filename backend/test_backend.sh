@@ -56,7 +56,7 @@ send_msg() {
 	req POST "/users/$user_id/conversation/msg" "{\"session_id\":$session_id,\"content\":\"$text\",\"provider\":\"$PROVIDER\",\"model_type\":\"$MODEL1\"}" "${CSRF_HEADER[@]}"
 }
 
-sentences=("Hello, We will do a memory test! Please remember what I said." "Please remember my name is Bob." "What is my name?")
+sentences=("Hello, We will do a memory test! Please remember what I said." "Please remember my name is Bob." "What is my name?" "You need to search 'How's the weather in Singapore' in the Internet and tell me about it.")
 for msg in "${sentences[@]}"; do
 	send_msg "$msg"
 done

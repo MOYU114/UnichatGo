@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     environment:
       - UNICHATGO_APIKEY_KEY=${UNICHATGO_APIKEY_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_SEARCH_ENGINE_ID=${GOOGLE_SEARCH_ENGINE_ID}
     ports:
       - "8090:8090"
     volumes:

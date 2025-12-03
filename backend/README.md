@@ -36,19 +36,26 @@ backend/
 Sample minimal config (`config.json`):
 ```json
 {
-  "basic": {
+  "basic_config": {
     "server_address": ":8090",
-    "database_path": "app.db"
+    "database_path": "./data/app.db"
   },
-  "assistant": {
-    "provider": "openai",
-    "model": "gpt-5-nano",
-    "base_url": "https://api.openai.com/v1"
-  },
-  "ai": {
-    "provider": "openai",
-    "model": "gpt-5-nano",
-    "base_url": "https://api.openai.com/v1"
+  "providers": {
+    "openai": {
+      "model": "gpt-5-nano",
+      "api_key": "",
+      "base_url": "https://api.openai.com/v1"
+    },
+    "gemini": {
+      "model": "gemini-2.5-flash",
+      "api_key": "",
+      "base_url": ""
+    },
+    "claude": {
+      "model": "claude-haiku-4-5",
+      "api_key": "",
+      "base_url": "https://api.anthropic.com"
+    }
   }
 }
 ```
@@ -57,6 +64,8 @@ Set environment overrides when needed:
 ```bash
 export UNICHATGO_CONFIG=/full/path/to/config.json
 export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)  # 32-byte key used to encrypt provider API tokens
+export GOOGLE_API_KEY=...                              # Optional: enables Google Search tool
+export GOOGLE_SEARCH_ENGINE_ID=...                     # Optional: enables Google Search tool
 ```
 ## Running Locally
 ```bash

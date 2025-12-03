@@ -16,6 +16,9 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/gemini"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
 	"google.golang.org/genai"
 )
@@ -24,6 +27,8 @@ type aiService struct {
 	aiModel   model.ToolCallingChatModel
 	config    *config.Config
 	histories map[int64][]*models.Message
+	todoTools []tool.BaseTool
+	agent     *react.Agent
 	mu        sync.RWMutex
 }
 
@@ -42,6 +47,8 @@ func NewAiService(provider string, modelType string, token string) (*aiService, 
 	if modelType == "" {
 		modelType = provCfg.Model
 	}
+	todoTools := InitToolsChain()
+	var reactAgent *react.Agent
 
 	switch provider {
 	case "openai":
@@ -81,11 +88,26 @@ func NewAiService(provider string, modelType string, token string) (*aiService, 
 	if err != nil {
 		log.Fatalf("Start Ai Service failed: %v", err)
 	}
+
+	if len(todoTools) > 0 {
+		reactAgent, err = react.NewAgent(context.Background(), &react.AgentConfig{
+			ToolCallingModel: chatModel,
+			ToolsConfig: compose.ToolsNodeConfig{
+				Tools: todoTools,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("init react agent: %w", err)
+		}
+	}
+
 	return &aiService{
 		aiModel:   chatModel,
 		config:    cfg,
 		histories: make(map[int64][]*models.Message),
-	}, err
+		todoTools: todoTools,
+		agent:     reactAgent,
+	}, nil
 }
 
 // StreamChat Using stream chat to handle Ai output
@@ -104,7 +126,15 @@ func (s *aiService) StreamChat(ctx context.Context, message *models.Message, pre
 	s.appendHistory(message.SessionID, message)
 	messagesEino := s.convertMessages(message.SessionID)
 
-	streamReader, err := s.aiModel.Stream(ctx, messagesEino)
+	var (
+		streamReader *schema.StreamReader[*schema.Message]
+		err          error
+	)
+	if s.agent != nil {
+		streamReader, err = s.agent.Stream(ctx, messagesEino)
+	} else {
+		streamReader, err = s.aiModel.Stream(ctx, messagesEino)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("generate Ai stream failed: %w", err)
 	}

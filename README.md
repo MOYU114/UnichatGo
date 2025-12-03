@@ -7,6 +7,8 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
   ```bash
   cd backend
   export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
+  export GOOGLE_API_KEY=your-google-api-key         # optional, enables Google Search tool
+  export GOOGLE_SEARCH_ENGINE_ID=your-search-engine # optional, enables Google Search tool
   go run ./
   ```
 - Frontend (local):
@@ -18,6 +20,8 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 - Docker Compose (with persisted DB):
   ```bash
   export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
+  export GOOGLE_API_KEY=...
+  export GOOGLE_SEARCH_ENGINE_ID=...
   docker compose up --build
   ```
 - Tear down containers: `docker compose down`
@@ -69,7 +73,7 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 ## Common Commands
 | Task | Command |
 |------|---------|
-| Start backend | `cd backend && export UNICHATGO_APIKEY_KEY=... && go run ./` |
+| Start backend | `cd backend && export UNICHATGO_APIKEY_KEY=... [GOOGLE_API_KEY=... GOOGLE_SEARCH_ENGINE_ID=...] && go run ./` |
 | Backend tests | `cd backend && go test ./...` |
 | Frontend dev  | `cd frontend && npm install && npm run dev` |
 | Frontend build | `npm run build` |
@@ -80,6 +84,8 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 ## Environment Variables
 - `UNICHATGO_CONFIG`: Optional path to backend config JSON (defaults to `backend/config.json`).
 - `UNICHATGO_APIKEY_KEY`: **Required** 32-byte key for encrypting provider tokens.
+- `GOOGLE_API_KEY`: Optional; when set with `GOOGLE_SEARCH_ENGINE_ID`, enables the Google Search tool in ReAct Agent.
+- `GOOGLE_SEARCH_ENGINE_ID`: Optional; Programmable Search Engine ID paired with `GOOGLE_API_KEY`.
 - `VITE_API_BASE_URL`: Frontend override for API endpoint (defaults to `/api` and proxied to `http://localhost:8090` during development).
 
 ## References
