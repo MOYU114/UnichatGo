@@ -19,6 +19,12 @@ type Service struct {
 	cipher *tokenCipher
 }
 
+// TokenInfo describes a stored provider token without exposing the secret value.
+type TokenInfo struct {
+	Provider  string    `json:"provider"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // NewService builds a new assistant service.
 func NewService(db *sql.DB) (*Service, error) {
 	cipher, err := newTokenCipherFromEnv()
@@ -214,6 +220,34 @@ func (s *Service) SetUserToken(ctx context.Context, userID int64, provider, toke
 	return nil
 }
 
+// ListUserTokens returns all providers that have stored tokens for the user.
+func (s *Service) ListUserTokens(ctx context.Context, userID int64) ([]TokenInfo, error) {
+	if userID <= 0 {
+		return nil, errors.New("invalid user id")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT provider, created_at FROM apiKeys WHERE user_id = ? ORDER BY provider ASC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list tokens: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []TokenInfo
+	for rows.Next() {
+		var info TokenInfo
+		if err := rows.Scan(&info.Provider, &info.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan token: %w", err)
+		}
+		tokens = append(tokens, info)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tokens: %w", err)
+	}
+	return tokens, nil
+}
+
 func (s *Service) encryptToken(token string) (string, error) {
 	if s.cipher == nil {
 		return token, nil
@@ -254,7 +288,7 @@ func (s *Service) DeleteUserToken(ctx context.Context, userID int64, provider st
 		return fmt.Errorf("delete token: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return errors.New("token not found")
+		return sql.ErrNoRows
 	}
 	return nil
 }

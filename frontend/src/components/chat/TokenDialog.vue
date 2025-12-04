@@ -17,6 +17,15 @@ watch(
   },
 )
 
+watch(
+  () => sessionStore.tokenDialogVisible,
+  (visible) => {
+    if (visible) {
+      sessionStore.fetchTokens()
+    }
+  },
+)
+
 async function handleSave() {
   if (!form.token.trim()) {
     ElMessage.warning('Token cannot be empty')
@@ -30,6 +39,18 @@ async function handleSave() {
     ElMessage.error(err.message || 'Failed to save token')
   }
 }
+
+async function handleRemove(providerName) {
+  try {
+    await sessionStore.removeToken(providerName)
+    ElMessage.success('Token removed')
+    if (providerName === form.provider) {
+      sessionStore.fetchTokens()
+    }
+  } catch (err) {
+    ElMessage.error(err.message || 'Failed to remove token')
+  }
+}
 </script>
 
 <template>
@@ -40,6 +61,19 @@ async function handleSave() {
     destroy-on-close
   >
     <el-form label-position="top">
+      <el-form-item label="Saved tokens" v-if="sessionStore.providerTokens.length">
+        <el-space wrap>
+          <el-tag
+            v-for="token in sessionStore.providerTokens"
+            :key="token.provider"
+            type="success"
+            closable
+            @close="handleRemove(token.provider)"
+          >
+            {{ token.provider }}
+          </el-tag>
+        </el-space>
+      </el-form-item>
       <el-form-item label="Provider">
         <el-select v-model="form.provider" placeholder="Select provider">
           <el-option

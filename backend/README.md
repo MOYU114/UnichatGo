@@ -67,6 +67,10 @@ export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)  # 32-byte key used to en
 export GOOGLE_API_KEY=...                              # Optional: enables Google Search tool
 export GOOGLE_SEARCH_ENGINE_ID=...                     # Optional: enables Google Search tool
 ```
+### Token Management APIs
+- `POST /api/users/:id/token`: upsert encrypted provider token.
+- `GET /api/users/:id/token`: list configured providers (without exposing token values).
+- `DELETE /api/users/:id/token`: remove a provider token; returns `404` if not found.
 ## Running Locally
 ```bash
 go run ./backend

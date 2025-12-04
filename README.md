@@ -42,7 +42,7 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
   - `POST /users/:id/conversation/start`: create or resume a session (auto-titles first message).
   - `POST /users/:id/conversation/msg`: SSE stream returning `ack` → `stream` → `done`/`error`.
   - `GET /users/:id/conversation/sessions/:session_id/messages`: fetch historical messages.
-- Provider tokens are encrypted using AES-GCM; set `UNICHATGO_APIKEY_KEY` (32-byte key) before running.
+- Provider tokens are encrypted using AES-GCM; set `UNICHATGO_APIKEY_KEY` (32-byte key) before running. Users can list/remove their provider tokens via `/api/users/:id/token` (GET/DELETE).
 - Run locally:
   ```bash
   cd backend
@@ -84,7 +84,7 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 ## Environment Variables
 - `UNICHATGO_CONFIG`: Optional path to backend config JSON (defaults to `backend/config.json`).
 - `UNICHATGO_APIKEY_KEY`: **Required** 32-byte key for encrypting provider tokens.
-- `GOOGLE_API_KEY`: Optional; when set with `GOOGLE_SEARCH_ENGINE_ID`, enables the Google Search tool in ReAct Agent.
+- `GOOGLE_API_KEY`: Optional; when set with `GOOGLE_SEARCH_ENGINE_ID`, enables the Google Search tool (and unified `web_search` fallback).
 - `GOOGLE_SEARCH_ENGINE_ID`: Optional; Programmable Search Engine ID paired with `GOOGLE_API_KEY`.
 - `VITE_API_BASE_URL`: Frontend override for API endpoint (defaults to `/api` and proxied to `http://localhost:8090` during development).
 

@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,50 @@ func TestHasUserTokenAllowsLegacyPlaintext(t *testing.T) {
 	}
 	if got != legacy {
 		t.Fatalf("expected legacy token, got %q", got)
+	}
+}
+
+func TestListAndDeleteUserTokens(t *testing.T) {
+	t.Setenv(apiTokenKeyEnv, strings.Repeat("c", 32))
+	db := openTestDB(t)
+	defer db.Close()
+
+	svc, err := NewService(db)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	userID := insertTestUser(t, db, "carol")
+	ctx := context.Background()
+
+	if err := svc.SetUserToken(ctx, userID, "openai", "token-1"); err != nil {
+		t.Fatalf("set token openai: %v", err)
+	}
+	if err := svc.SetUserToken(ctx, userID, "gemini", "token-2"); err != nil {
+		t.Fatalf("set token gemini: %v", err)
+	}
+
+	tokens, err := svc.ListUserTokens(ctx, userID)
+	if err != nil {
+		t.Fatalf("list tokens: %v", err)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("expected 2 tokens, got %d", len(tokens))
+	}
+
+	if err := svc.DeleteUserToken(ctx, userID, "openai"); err != nil {
+		t.Fatalf("delete token: %v", err)
+	}
+	// ensure token removed
+	tokens, err = svc.ListUserTokens(ctx, userID)
+	if err != nil {
+		t.Fatalf("list tokens after delete: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].Provider != "gemini" {
+		t.Fatalf("unexpected tokens after delete: %+v", tokens)
+	}
+
+	if err := svc.DeleteUserToken(ctx, userID, "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
 	}
 }
 

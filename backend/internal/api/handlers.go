@@ -80,6 +80,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	userRoutes := api.Group("/users/:id")
 	userRoutes.Use(authMW, h.requirePathUser(), h.auth.CSRFMiddleware())
 	userRoutes.POST("/token", h.setToken)
+	userRoutes.GET("/token", h.listTokens)
 	userRoutes.DELETE("/token", h.deleteToken)
 	userRoutes.POST("/conversation/session-list", h.getSessionList)
 	userRoutes.POST("/conversation/start", h.startConversation)
@@ -458,6 +459,19 @@ func (h *Handler) setToken(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handler) listTokens(c *gin.Context) {
+	userID, ok := h.authorizedUserID(c)
+	if !ok {
+		return
+	}
+	tokens, err := h.assistant.ListUserTokens(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tokens": tokens})
+}
+
 func (h *Handler) deleteToken(c *gin.Context) {
 	userID, ok := h.authorizedUserID(c)
 	if !ok {
@@ -471,6 +485,10 @@ func (h *Handler) deleteToken(c *gin.Context) {
 		return
 	}
 	if err := h.assistant.DeleteUserToken(c.Request.Context(), userID, req.Provider); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "token not found"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

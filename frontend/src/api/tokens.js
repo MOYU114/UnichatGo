@@ -9,3 +9,8 @@ export async function deleteProviderToken(userId, provider) {
     data: { provider },
   })
 }
+
+export async function listProviderTokens(userId) {
+  const { data } = await http.get(`/users/${userId}/token`)
+  return data.tokens || []
+}

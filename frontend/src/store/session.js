@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import {
   listSessions,
   startConversation,
@@ -7,7 +8,7 @@ import {
   streamConversation,
   fetchSessionMessages,
 } from '../api/sessions'
-import { saveProviderToken, deleteProviderToken } from '../api/tokens'
+import { saveProviderToken, deleteProviderToken, listProviderTokens } from '../api/tokens'
 import { useAuthStore } from './auth'
 
 const PROVIDERS = {
@@ -35,7 +36,12 @@ export const useSessionStore = defineStore('session', () => {
   const model = ref(PROVIDERS.openai[0])
   const availableModels = ref(PROVIDERS.openai)
   const tokenDialogVisible = ref(false)
-  const hasToken = ref(true)
+  const providerTokens = ref([])
+  const tokensLoaded = ref(false)
+  const hasToken = computed(() => {
+    if (!tokensLoaded.value) return true
+    return providerTokens.value.some((item) => item.provider === provider.value)
+  })
 
   const currentMessages = computed(() => messagesBySession.value[currentSessionId.value] || [])
   const currentSessionTitle = computed(() => {
@@ -76,6 +82,7 @@ export const useSessionStore = defineStore('session', () => {
     const authStore = useAuthStore()
     if (!authStore.user) return
     loadingSessions.value = true
+    tokensLoaded.value = false
     try {
       const result = await listSessions(authStore.user.id)
       sessions.value = result.map(normalizeSession)
@@ -83,6 +90,7 @@ export const useSessionStore = defineStore('session', () => {
         currentSessionId.value = sessions.value[0].id
         await loadMessages(sessions.value[0].id)
       }
+      await fetchTokens()
     } catch (err) {
       console.error(err)
       sessions.value = []
@@ -217,14 +225,15 @@ export const useSessionStore = defineStore('session', () => {
           },
           onError: (payload) => {
             if (typeof payload?.message === 'string' && payload.message.includes('api token not configured')) {
-              hasToken.value = false
+              markTokenMissing(provider.value)
               tokenDialogVisible.value = true
+              ElMessage.warning('Configure API token first')
+              throw new Error('API token not configured')
             }
             throw new Error(payload?.message || 'Conversation failed')
           },
         },
       )
-      hasToken.value = true
     } finally {
       sending.value = false
     }
@@ -234,7 +243,7 @@ export const useSessionStore = defineStore('session', () => {
     const authStore = useAuthStore()
     if (!authStore.user) throw new Error('Authentication required')
     await saveProviderToken(authStore.user.id, { provider: providerName, token })
-    hasToken.value = true
+    await fetchTokens()
     tokenDialogVisible.value = false
   }
 
@@ -242,7 +251,23 @@ export const useSessionStore = defineStore('session', () => {
     const authStore = useAuthStore()
     if (!authStore.user) throw new Error('Authentication required')
     await deleteProviderToken(authStore.user.id, providerName)
-    hasToken.value = false
+    providerTokens.value = providerTokens.value.filter((item) => item.provider !== providerName)
+  }
+
+  async function fetchTokens() {
+    const authStore = useAuthStore()
+    if (!authStore.user) {
+      providerTokens.value = []
+      tokensLoaded.value = true
+      return
+    }
+    const tokens = await listProviderTokens(authStore.user.id)
+    providerTokens.value = tokens
+    tokensLoaded.value = true
+  }
+
+  function markTokenMissing(providerName) {
+    providerTokens.value = providerTokens.value.filter((item) => item.provider !== providerName)
   }
 
   function showTokenDialog() {
@@ -278,6 +303,7 @@ export const useSessionStore = defineStore('session', () => {
     providers: PROVIDERS,
     availableModels,
     tokenDialogVisible,
+    providerTokens,
     hasToken,
     loadSessions,
     loadMessages,
@@ -287,6 +313,7 @@ export const useSessionStore = defineStore('session', () => {
     sendMessage,
     saveToken,
     removeToken,
+    fetchTokens,
     showTokenDialog,
     hideTokenDialog,
     setModel,
