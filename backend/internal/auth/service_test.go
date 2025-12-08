@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"unichatgo/internal/config"
 	"unichatgo/internal/storage"
 )
 
@@ -71,11 +72,18 @@ func TestAuthValidateExpiredToken(t *testing.T) {
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := storage.Open(":memory:")
+	cfg := &config.Config{
+		Databases: map[string]config.DatabaseConfig{
+			"sqlite3": {
+				DSN: ":memory:",
+			},
+		},
+	}
+	db, err := storage.Open("sqlite3", cfg)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := storage.Migrate(db); err != nil {
+	if err := storage.Migrate(db, "sqlite3"); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
 	return db
@@ -83,7 +91,8 @@ func openTestDB(t *testing.T) *sql.DB {
 
 func insertUser(t *testing.T, db *sql.DB, id int64) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, '', datetime('now'))`, id, "user_"+time.Now().Format("150405"))
+	_, err := db.Exec(`INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, '', ?)`,
+		id, "user_"+time.Now().Format("150405"), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("insert user: %v", err)
 	}

@@ -21,16 +21,20 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	db, err := storage.Open(cfg.BasicConfig.DatabasePath)
+	dbType := os.Getenv("UNICHATGO_DB")
+	if dbType == "" {
+		dbType = "sqlite3"
+	}
+	log.Printf("dbType: %s\n", dbType)
+	db, err := storage.Open(dbType, cfg)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
 	defer db.Close()
 	// Create necessary tables: users, apiKeys, sessions, messages
-	if err := storage.Migrate(db); err != nil {
+	if err := storage.Migrate(db, dbType); err != nil {
 		log.Fatalf("migrate database: %v", err)
 	}
-	//TODO: aiService need to add in the future
 
 	assistantService, err := assistant.NewService(db)
 	if err != nil {

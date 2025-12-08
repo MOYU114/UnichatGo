@@ -208,14 +208,31 @@ func (s *Service) SetUserToken(ctx context.Context, userID int64, provider, toke
 		return err
 	}
 
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO apiKeys (user_id, provider, api_key, created_at)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(user_id, provider) DO UPDATE SET api_key = excluded.api_key, created_at = excluded.created_at`,
-		userID, provider, encrypted, time.Now().UTC(),
+	now := time.Now().UTC()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE apiKeys SET api_key = ?, created_at = ? WHERE user_id = ? AND provider = ?`,
+		encrypted, now, userID, provider,
 	)
 	if err != nil {
-		return fmt.Errorf("store token: %w", err)
+		return fmt.Errorf("update token: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO apiKeys (user_id, provider, api_key, created_at) VALUES (?, ?, ?, ?)`,
+			userID, provider, encrypted, now,
+		); err != nil {
+			return fmt.Errorf("insert token: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit token tx: %w", err)
 	}
 	return nil
 }

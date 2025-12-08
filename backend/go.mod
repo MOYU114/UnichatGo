@@ -12,6 +12,7 @@ require (
 	github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2 v2.0.0-20251202111544-e4f4645bf07d
 	github.com/cloudwego/eino-ext/components/tool/googlesearch v0.0.0-20251202111544-e4f4645bf07d
 	github.com/gin-gonic/gin v1.10.1
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/mattn/go-sqlite3 v1.14.31
 	google.golang.org/genai v1.36.0
 )
@@ -21,6 +22,7 @@ require (
 	cloud.google.com/go/auth v0.10.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.5 // indirect
 	cloud.google.com/go/compute/metadata v0.5.2 // indirect
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/PuerkitoBio/goquery v1.10.3 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.4.0 // indirect

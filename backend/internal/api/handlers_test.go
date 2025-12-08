@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"unichatgo/internal/auth"
+	"unichatgo/internal/config"
 	"unichatgo/internal/models"
 	"unichatgo/internal/service/assistant"
 	"unichatgo/internal/storage"
@@ -448,11 +449,16 @@ func newTestServer(t *testing.T) (*gin.Engine, *sql.DB, *Handler) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("UNICHATGO_APIKEY_KEY", strings.Repeat("k", 32))
 
-	db, err := storage.Open(":memory:")
+	cfg := &config.Config{
+		Databases: map[string]config.DatabaseConfig{
+			"sqlite3": {DSN: ":memory:"},
+		},
+	}
+	db, err := storage.Open("sqlite3", cfg)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := storage.Migrate(db); err != nil {
+	if err := storage.Migrate(db, "sqlite3"); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
 	asst, err := assistant.NewService(db)

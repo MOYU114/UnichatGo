@@ -19,5 +19,18 @@
       "api_key": "",
       "base_url": "https://claude.nekro.ai"
     }
+  },
+  "databases": {
+    "sqlite3": {
+      "dsn": "./data/app.db"
+    },
+    "mysql": {
+      "host": "",
+      "port": 3306,
+      "username": "",
+      "password": "",
+      "db_name": "unichatgo",
+      "params": "charset=utf8mb4&parseTime=true&loc=Local"
+    }
   }
 }

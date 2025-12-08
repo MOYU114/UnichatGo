@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"unichatgo/internal/config"
 	"unichatgo/internal/storage"
 )
 
@@ -109,11 +110,16 @@ func TestListAndDeleteUserTokens(t *testing.T) {
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := storage.Open(":memory:")
+	cfg := &config.Config{
+		Databases: map[string]config.DatabaseConfig{
+			"sqlite3": {DSN: ":memory:"},
+		},
+	}
+	db, err := storage.Open("sqlite3", cfg)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := storage.Migrate(db); err != nil {
+	if err := storage.Migrate(db, "sqlite3"); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
 	return db
@@ -121,7 +127,8 @@ func openTestDB(t *testing.T) *sql.DB {
 
 func insertTestUser(t *testing.T, db *sql.DB, username string) int64 {
 	t.Helper()
-	res, err := db.Exec(`INSERT INTO users (username, password_hash, created_at) VALUES (?, '', datetime('now'))`, username)
+	now := time.Now().UTC()
+	res, err := db.Exec(`INSERT INTO users (username, password_hash, created_at) VALUES (?, '', ?)`, username, now)
 	if err != nil {
 		t.Fatalf("insert user: %v", err)
 	}

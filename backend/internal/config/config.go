@@ -11,8 +11,20 @@ import (
 type Config struct {
 	BasicConfig BasicConfig               `json:"basic_config"`
 	Providers   map[string]ProviderConfig `json:"providers"`
+	Databases   map[string]DatabaseConfig `json:"databases"`
 }
 
+type DatabaseConfig struct {
+	// for sqlite3
+	DSN string `json:"dsn"`
+	// for mysql only
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	DBName   string `json:"db_name"`
+	Params   string `json:"params"`
+}
 type ProviderConfig struct {
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
@@ -21,7 +33,6 @@ type ProviderConfig struct {
 
 type BasicConfig struct {
 	ServerAddress string `json:"server_address"`
-	DatabasePath  string `json:"database_path"`
 }
 
 // Load reads configuration from the provided path (defaults to config.json).
@@ -44,14 +55,6 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := json.NewDecoder(file).Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
-	}
-
-	if cfg.BasicConfig.DatabasePath == "" {
-		return nil, fmt.Errorf("database_path must be configured")
-	}
-
-	if !filepath.IsAbs(cfg.BasicConfig.DatabasePath) {
-		cfg.BasicConfig.DatabasePath = filepath.Join(filepath.Dir(absPath), cfg.BasicConfig.DatabasePath)
 	}
 
 	return &cfg, nil
