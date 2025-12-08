@@ -6,3 +6,5 @@
 .idea
 .gopath
 config.json
+/backend/data/
+.DS_Store

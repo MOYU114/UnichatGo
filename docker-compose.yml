@@ -1,4 +1,24 @@
 services:
+  mysql:
+    image: mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWD}
+      - MYSQL_DATABASE=unichatgo
+      - MYSQL_USER=unichatgo
+      - MYSQL_PASSWORD=${MYSQL_UNICHATGO_PASSWD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./backend/data/mysql:/var/lib/mysql
+    command:
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWD}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   backend:
     build:
       context: ./backend
@@ -7,10 +27,14 @@ services:
       - UNICHATGO_APIKEY_KEY=${UNICHATGO_APIKEY_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - GOOGLE_SEARCH_ENGINE_ID=${GOOGLE_SEARCH_ENGINE_ID}
+      - UNICHATGO_DB=${UNICHATGO_DB}
     ports:
       - "8090:8090"
     volumes:
       - ./backend/data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
   frontend:
     build:
       context: ./frontend
@@ -21,3 +45,5 @@ services:
       - "5173:80"
     depends_on:
       - backend
+volumes:
+  mysql-data:

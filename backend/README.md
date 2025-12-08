@@ -37,8 +37,7 @@ Sample minimal config (`config.json`):
 ```json
 {
   "basic_config": {
-    "server_address": ":8090",
-    "database_path": "./data/app.db"
+    "server_address": ":8090"
   },
   "providers": {
     "openai": {
@@ -56,6 +55,19 @@ Sample minimal config (`config.json`):
       "api_key": "",
       "base_url": "https://api.anthropic.com"
     }
+  },
+  "databases": {
+    "sqlite3": {
+      "dsn": "./data/app.db"
+    },
+    "mysql": {
+      "host": "mysql_host_ip",
+      "port": 3306,
+      "username": "unichatgo",
+      "password": "password",
+      "db_name": "unichatgo",
+      "params": "charset=utf8mb4&parseTime=true&loc=Local"
+    }
   }
 }
 ```
@@ -64,6 +76,7 @@ Set environment overrides when needed:
 ```bash
 export UNICHATGO_CONFIG=/full/path/to/config.json
 export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)  # 32-byte key used to encrypt provider API tokens
+export UNICHATGO_DB=sqlite3                              # or mysql
 export GOOGLE_API_KEY=...                              # Optional: enables Google Search tool
 export GOOGLE_SEARCH_ENGINE_ID=...                     # Optional: enables Google Search tool
 ```

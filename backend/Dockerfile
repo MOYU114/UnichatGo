@@ -15,11 +15,11 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 
 WORKDIR /app
 COPY --from=builder /app/unichatgo .
-# For China mainland
-#COPY config.json.example_cn ./config.json
-# For Global
-COPY config.json.example ./config.json
+# For China mainland config.json.example_cn
+# For Global config.json.example
+COPY config.json ./config.json
 RUN mkdir -p /app/data
+RUN mkdir -p /app/data/mysql
 
 ENV UNICHATGO_CONFIG=/app/config.json
 EXPOSE 8090

@@ -26,8 +26,15 @@ jobs:
             export UNICHATGO_APIKEY_KEY='${{ secrets.UNICHATGO_APIKEY_KEY }}'
             export GOOGLE_API_KEY='${{ secrets.GOOGLE_API_KEY }}'
             export GOOGLE_SEARCH_ENGINE_ID='${{ secrets.GOOGLE_SEARCH_ENGINE_ID }}'
+            export UNICHATGO_DB=mysql
+            export MYSQL_HOST='${{ secrets.MYSQL_HOST }}'
+            export MYSQL_UNICHATGO_PASSWD='${{ secrets.MYSQL_UNICHATGO_PASSWD }}'
+            export MYSQL_ROOT_PASSWD='${{ secrets.MYSQL_ROOT_PASSWD }}'
             cd ~/UnichatGo
             docker compose down
             git pull
+            sed -e "s|\${MYSQL_HOST}|${MYSQL_HOST}|g" \
+                -e "s|\${MYSQL_UNICHATGO_PASSWD}|${MYSQL_UNICHATGO_PASSWD}|g" \
+                backend/config.json.example > backend/config.json
             docker compose build
             docker compose up -d --force-recreate

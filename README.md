@@ -84,6 +84,11 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
 ## Environment Variables
 - `UNICHATGO_CONFIG`: Optional path to backend config JSON (defaults to `backend/config.json`).
 - `UNICHATGO_APIKEY_KEY`: **Required** 32-byte key for encrypting provider tokens.
+- `UNICHATGO_DB`: Choose database driver (`sqlite3` by default, set to `mysql` when using MySQL).
+  - If you need to use MySQL, you MUST config following variables:
+    - `MYSQL_HOST`: your MySQL IP address;
+    - `MYSQL_ROOT_PASSWD`: you root password for MySQL;
+    - `MYSQL_UNICHATGO_PASSWD`: you unichatgo (default user name) database password for MySQL.
 - `GOOGLE_API_KEY`: Optional; when set with `GOOGLE_SEARCH_ENGINE_ID`, enables the Google Search tool (and unified `web_search` fallback).
 - `GOOGLE_SEARCH_ENGINE_ID`: Optional; Programmable Search Engine ID paired with `GOOGLE_API_KEY`.
 - `VITE_API_BASE_URL`: Frontend override for API endpoint (defaults to `/api` and proxied to `http://localhost:8090` during development).

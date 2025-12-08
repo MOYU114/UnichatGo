@@ -1,7 +1,6 @@
 {
   "basic_config":{
-    "server_address": ":8090",
-    "database_path": "./data/app.db"
+    "server_address": ":8090"
   },
   "providers": {
     "openai": {
@@ -25,10 +24,10 @@
       "dsn": "./data/app.db"
     },
     "mysql": {
-      "host": "",
+      "host": "${MYSQL_HOST}",
       "port": 3306,
-      "username": "",
-      "password": "",
+      "username": "unichatgo",
+      "password": "${MYSQL_UNICHATGO_PASSWD}",
       "db_name": "unichatgo",
       "params": "charset=utf8mb4&parseTime=true&loc=Local"
     }
