@@ -5,7 +5,7 @@ BASE_URL="http://localhost:8090/api"
 USERNAME="tester_$(date +%s)"
 PASSWORD="pass123"
 PROVIDER="openai"
-MODEL1="gpt-5-nano"
+MODEL1="gpt-4o-mini"
 MODEL2="gpt-5-mini"
 TOKEN="YOUR_TOKEN_HERE"
 COOKIE_JAR=$(mktemp)
@@ -58,7 +58,10 @@ send_msg() {
 
 sentences=("Hello, We will do a memory test! Please remember what I said." "Please remember my name is Bob." "What is my name?" "You need to search 'How's the weather in Singapore' in the Internet and tell me about it.")
 for msg in "${sentences[@]}"; do
+	start=$(date +%s)
 	send_msg "$msg"
+	end=$(date +%s)
+	echo "Message '$msg' took $((end - start)) seconds"
 done
 
 echo "Conversation history for session $session_id:"

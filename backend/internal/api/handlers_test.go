@@ -466,7 +466,7 @@ func newTestServer(t *testing.T) (*gin.Engine, *sql.DB, *Handler) {
 		t.Fatalf("assistant service: %v", err)
 	}
 	authSvc := auth.NewService(db, time.Hour)
-	handler := NewHandler(asst, authSvc)
+	handler := NewHandler(asst, authSvc, worker.DispatcherConfig{MaxWorkers: 2, QueueSize: 10})
 	handler.workers = newMockWorker(asst)
 
 	router := gin.New()
@@ -535,7 +535,7 @@ func newMockWorker(asst *assistant.Service) *mockWorker {
 	return &mockWorker{assistant: asst}
 }
 
-func (m *mockWorker) EnsureSession(req worker.SessionRequest) (*models.Session, error) {
+func (m *mockWorker) InitSession(req worker.SessionRequest) (*models.Session, error) {
 	ctx := req.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -566,7 +566,7 @@ func (m *mockWorker) Stream(req worker.StreamRequest) (*models.Message, string, 
 	return resp, "Mock Title", nil
 }
 
-func (m *mockWorker) Stop(int64)         {}
+func (m *mockWorker) ResetUser(int64)    {}
 func (m *mockWorker) Purge(int64, int64) {}
 
 type apiTestClient struct {

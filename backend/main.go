@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"time"
+	"unichatgo/internal/worker"
 
 	"github.com/gin-gonic/gin"
 
@@ -40,8 +41,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("init assistant service: %v", err)
 	}
+	workerCfg := worker.DispatcherConfig{MaxWorkers: cfg.BasicConfig.MaxWorkers, QueueSize: cfg.BasicConfig.QueueSize}
 	authService := auth.NewService(db, 24*time.Hour)
-	handlers := api.NewHandler(assistantService, authService)
+	handlers := api.NewHandler(assistantService, authService, workerCfg)
 
 	router := gin.Default()
 	handlers.RegisterRoutes(router)

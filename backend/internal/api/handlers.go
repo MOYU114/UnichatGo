@@ -20,9 +20,9 @@ import (
 )
 
 type WorkerManager interface {
-	EnsureSession(worker.SessionRequest) (*models.Session, error)
+	InitSession(worker.SessionRequest) (*models.Session, error)
 	Stream(worker.StreamRequest) (*models.Message, string, error)
-	Stop(userID int64)
+	ResetUser(userID int64)
 	Purge(userID, sessionID int64)
 }
 
@@ -34,11 +34,11 @@ type Handler struct {
 }
 
 // NewHandler constructs a Handler instance.
-func NewHandler(service *assistant.Service, authService *auth.Service) *Handler {
+func NewHandler(service *assistant.Service, authService *auth.Service, cfg worker.DispatcherConfig) *Handler {
 	return &Handler{
 		assistant: service,
 		auth:      authService,
-		workers:   worker.NewManager(service),
+		workers:   worker.NewManager(service, cfg),
 	}
 }
 
@@ -223,7 +223,7 @@ func (h *Handler) startConversation(c *gin.Context) {
 		return
 	}
 
-	session, err := h.workers.EnsureSession(worker.SessionRequest{
+	session, err := h.workers.InitSession(worker.SessionRequest{
 		Context:   c.Request.Context(),
 		UserID:    userID,
 		SessionID: sessionID,
@@ -249,7 +249,7 @@ func (h *Handler) logoutUser(c *gin.Context) {
 	if !ok {
 		return
 	}
-	h.workers.Stop(userID)
+	h.workers.ResetUser(userID)
 	if authToken, ok := auth.AuthTokenFromContext(c); ok {
 		_ = h.auth.RevokeToken(c.Request.Context(), authToken)
 	}
@@ -266,7 +266,7 @@ func (h *Handler) deleteUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	h.workers.Stop(id)
+	h.workers.ResetUser(id)
 	if err := h.assistant.DeleteUser(c.Request.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
@@ -492,7 +492,7 @@ func (h *Handler) deleteToken(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.workers.Stop(userID)
+	h.workers.ResetUser(userID)
 	c.Status(http.StatusNoContent)
 }
 

@@ -33,6 +33,8 @@ type ProviderConfig struct {
 
 type BasicConfig struct {
 	ServerAddress string `json:"server_address"`
+	MaxWorkers    int    `json:"max_workers"`
+	QueueSize     int    `json:"queue_size"`
 }
 
 // Load reads configuration from the provided path (defaults to config.json).

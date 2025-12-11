@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestWorkerStateCacheOperations(t *testing.T) {
-	state := newWorkerState()
+	state := newUserState()
 
 	session := &models.Session{ID: 1, Title: "pending"}
 	state.setSession(session)
@@ -33,25 +34,12 @@ func TestWorkerStateCacheOperations(t *testing.T) {
 		t.Fatalf("session should be ready")
 	}
 
-	waiter := make(chan workerReturn, 1)
-	state.addWaiter(1, waiter)
-	state.drainWaiters(1, workerReturn{session: session})
-	ret := <-waiter
-	if ret.session != session {
-		t.Fatalf("drainWaiters returned unexpected session")
-	}
-
 	pendingID := int64(-2)
 	state.sessions[pendingID] = &models.Session{ID: pendingID, Title: "pending"}
 	state.history[pendingID] = []*models.Message{{ID: 20}}
-	waiter2 := make(chan workerReturn, 1)
-	state.addWaiter(pendingID, waiter2)
 	state.promoteSession(pendingID, 2)
 	if state.getSession(2) == nil {
 		t.Fatalf("session not promoted")
-	}
-	if _, ok := state.waiters[2]; !ok {
-		t.Fatalf("waiters not promoted")
 	}
 
 	state.purgeCache(2)
@@ -66,8 +54,8 @@ func TestWorkerStateCacheOperations(t *testing.T) {
 }
 
 func TestManagerPurgeAndStop(t *testing.T) {
-	manager := NewManager(nil)
-	state := manager.ensureWorker(42)
+	manager := NewManager(newMockAssistant(), DispatcherConfig{MaxWorkers: 2, QueueSize: 10})
+	state := manager.getState(42)
 
 	state.setSession(&models.Session{ID: 99, Title: "cached"})
 	state.setHistory(99, []*models.Message{{ID: 1}})
@@ -75,65 +63,289 @@ func TestManagerPurgeAndStop(t *testing.T) {
 	state.markReady(99)
 
 	manager.Purge(42, 99)
-	if !waitFor(t, time.Second, func() bool {
-		return state.getSession(99) == nil && state.getResources(99) == nil && !state.isReady(99)
-	}) {
+	if state.getSession(99) != nil || state.getResources(99) != nil || state.isReady(99) {
 		t.Fatalf("purge did not clear cached session")
 	}
 
-	manager.Stop(42)
-	if !waitFor(t, time.Second, func() bool {
-		return manager.getWorker(42) == nil
-	}) {
-		t.Fatalf("worker still present after stop")
+	manager.ResetUser(42)
+	manager.mu.Lock()
+	if _, ok := manager.state[42]; ok {
+		t.Fatalf("user state not removed after reset")
 	}
+	manager.mu.Unlock()
 
-	// Ensure calling Purge after Stop is a no-op.
+	// Ensure calling Purge after ResetUser is a no-op.
 	manager.Purge(42, 99)
 }
 
-func TestWorkerStateConcurrentWaiters(t *testing.T) {
-	state := newWorkerState()
-	session := &models.Session{ID: 7}
+func TestDispatcherInitAndStream(t *testing.T) {
+	mockAsst := newMockAssistant()
+	manager := NewManager(mockAsst, DispatcherConfig{MaxWorkers: 2, QueueSize: 10})
 
-	const waiters = 32
-	done := make(chan struct{})
-	go func() {
-		var wg sync.WaitGroup
-		wg.Add(waiters)
-		for i := 0; i < waiters; i++ {
-			go func() {
-				ch := make(chan workerReturn, 1)
-				state.addWaiter(1, ch)
-				ret := <-ch
-				if ret.session != session {
-					t.Errorf("unexpected session: %#v", ret.session)
-				}
-				wg.Done()
-			}()
-		}
-		wg.Wait()
-		close(done)
+	origAI := aiFactory
+	origTitle := titleFactory
+	defer func() {
+		aiFactory = origAI
+		titleFactory = origTitle
 	}()
+	aiFactory = func(provider, model, token string) (AICalling, error) {
+		return &fakeAI{}, nil
+	}
+	titleFactory = func(provider, model, token string) (AsCalling, error) {
+		return &fakeAS{}, nil
+	}
 
-	time.Sleep(20 * time.Millisecond)
-	state.drainWaiters(1, workerReturn{session: session})
+	session, err := manager.InitSession(SessionRequest{
+		UserID:   1,
+		Provider: "mock",
+		Model:    "m1",
+		Token:    "tok",
+	})
+	if err != nil {
+		t.Fatalf("InitSession error: %v", err)
+	}
+	if session == nil || session.ID == 0 {
+		t.Fatalf("expected session to be created")
+	}
 
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for waiters to drain")
+	msg, title, err := manager.Stream(StreamRequest{
+		SessionRequest: SessionRequest{
+			Context:   context.Background(),
+			UserID:    1,
+			SessionID: session.ID,
+			Provider:  "mock",
+			Model:     "m1",
+			Token:     "tok",
+			Message:   &models.Message{Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if msg == nil || msg.Content != "ai: hello" {
+		t.Fatalf("unexpected stream response: %#v", msg)
+	}
+	if title != "fake-title" {
+		t.Fatalf("unexpected title: %s", title)
 	}
 }
 
-func waitFor(t *testing.T, timeout time.Duration, cond func() bool) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
+func TestDispatcherJobOrder(t *testing.T) {
+	mockAsst := newMockAssistant()
+	manager := NewManager(mockAsst, DispatcherConfig{MaxWorkers: 2, QueueSize: 10})
+
+	origAI := aiFactory
+	origTitle := titleFactory
+	defer func() {
+		aiFactory = origAI
+		titleFactory = origTitle
+	}()
+
+	var mu sync.Mutex
+	order := make([]string, 0, 2)
+	aiFactory = func(provider, model, token string) (AICalling, error) {
+		return &labeledAI{onRun: func(label string) {
+			mu.Lock()
+			order = append(order, label)
+			mu.Unlock()
+		}}, nil
 	}
-	return cond()
+	titleFactory = func(provider, model, token string) (AsCalling, error) {
+		return &fakeAS{}, nil
+	}
+
+	session, err := manager.InitSession(SessionRequest{UserID: 11, Provider: "mock", Model: "m", Token: "tok"})
+	if err != nil {
+		t.Fatalf("InitSession error: %v", err)
+	}
+
+	if _, _, err := manager.Stream(StreamRequest{
+		SessionRequest: SessionRequest{
+			Context:   context.Background(),
+			UserID:    11,
+			SessionID: session.ID,
+			Provider:  "mock",
+			Model:     "m",
+			Token:     "tok",
+			Message:   &models.Message{Content: "first"},
+		},
+	}); err != nil {
+		t.Fatalf("Stream (first) error: %v", err)
+	}
+	if _, _, err := manager.Stream(StreamRequest{
+		SessionRequest: SessionRequest{
+			Context:   context.Background(),
+			UserID:    11,
+			SessionID: session.ID,
+			Provider:  "mock",
+			Model:     "m",
+			Token:     "tok",
+			Message:   &models.Message{Content: "second"},
+		},
+	}); err != nil {
+		t.Fatalf("Stream (second) error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
+		t.Fatalf("expected execution order [first second], got %v", order)
+	}
+}
+
+func TestDispatcherQueuesWhenWorkerBusy(t *testing.T) {
+	mockAsst := newMockAssistant()
+	manager := NewManager(mockAsst, DispatcherConfig{MaxWorkers: 2, QueueSize: 10})
+
+	origAI := aiFactory
+	origTitle := titleFactory
+	defer func() {
+		aiFactory = origAI
+		titleFactory = origTitle
+	}()
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+	aiFactory = func(provider, model, token string) (AICalling, error) {
+		return &fakeBlockingAI{block: block, started: started}, nil
+	}
+	titleFactory = func(provider, model, token string) (AsCalling, error) {
+		return &fakeAS{}, nil
+	}
+
+	session, err := manager.InitSession(SessionRequest{UserID: 21, Provider: "mock", Model: "m", Token: "tok"})
+	if err != nil {
+		t.Fatalf("InitSession error: %v", err)
+	}
+
+	done1 := make(chan struct{})
+	done2 := make(chan struct{})
+
+	go func() {
+		_, _, _ = manager.Stream(StreamRequest{
+			SessionRequest: SessionRequest{
+				Context:   context.Background(),
+				UserID:    21,
+				SessionID: session.ID,
+				Provider:  "mock",
+				Model:     "m",
+				Token:     "tok",
+				Message:   &models.Message{Content: "first"},
+			},
+		})
+		close(done1)
+	}()
+
+	go func() {
+		_, _, _ = manager.Stream(StreamRequest{
+			SessionRequest: SessionRequest{
+				Context:   context.Background(),
+				UserID:    21,
+				SessionID: session.ID,
+				Provider:  "mock",
+				Model:     "m",
+				Token:     "tok",
+				Message:   &models.Message{Content: "second"},
+			},
+		})
+		close(done2)
+	}()
+
+	select {
+	case <-started:
+		close(block)
+	case <-time.After(time.Second):
+		t.Fatalf("first job did not start")
+	}
+	select {
+	case <-done1:
+	case <-time.After(time.Second):
+		t.Fatalf("first job did not complete after unblocking")
+	}
+
+	select {
+	case <-done2:
+	case <-time.After(time.Second):
+		t.Fatalf("second job did not complete after first")
+	}
+}
+
+// --- helpers ---
+
+type mockAssistant struct {
+	mu       sync.Mutex
+	nextID   int64
+	sessions map[int64]*models.Session
+}
+
+func newMockAssistant() *mockAssistant {
+	return &mockAssistant{
+		sessions: make(map[int64]*models.Session),
+	}
+}
+
+func (m *mockAssistant) CreateSession(ctx context.Context, userID int64, title string) (*models.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextID++
+	session := &models.Session{ID: m.nextID, Title: title, UserID: userID}
+	m.sessions[session.ID] = session
+	return session, nil
+}
+
+func (m *mockAssistant) GetSessionWithMessages(ctx context.Context, userID, sessionID int64) (*models.Session, []*models.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sessions[sessionID], nil, nil
+}
+
+func (m *mockAssistant) UpdateSessionTitle(ctx context.Context, userID, sessionID int64, title string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if session, ok := m.sessions[sessionID]; ok {
+		session.Title = title
+	}
+	return nil
+}
+
+type fakeAI struct{}
+
+func (f *fakeAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+	if callback != nil {
+		_ = callback("chunk")
+	}
+	return &models.Message{Content: "ai: " + message.Content}, nil
+}
+
+type fakeAS struct{}
+
+func (f *fakeAS) GenerateTitle(ctx context.Context, messages []*models.Message) (string, error) {
+	return "fake-title", nil
+}
+
+type fakeBlockingAI struct {
+	block   chan struct{}
+	started chan struct{}
+	once    sync.Once
+}
+
+func (f *fakeBlockingAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+	f.once.Do(func() {
+		if f.started != nil {
+			close(f.started)
+		}
+	})
+	<-f.block
+	return &models.Message{Content: "ai: " + message.Content}, nil
+}
+
+type labeledAI struct {
+	onRun func(label string)
+}
+
+func (f *labeledAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+	if f.onRun != nil {
+		f.onRun(message.Content)
+	}
+	return &models.Message{Content: "ai: " + message.Content}, nil
 }

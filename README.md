@@ -36,13 +36,14 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 ```
 
 ## Backend Highlights
-- Go 1.21+, SQLite storage.
+- Go 1.24+, SQLite/MySQL storage.
 - Auth: login issues HttpOnly cookies + CSRF tokens; supports logout and account deletion.
 - Conversations:
   - `POST /users/:id/conversation/start`: create or resume a session (auto-titles first message).
   - `POST /users/:id/conversation/msg`: SSE stream returning `ack` → `stream` → `done`/`error`.
   - `GET /users/:id/conversation/sessions/:session_id/messages`: fetch historical messages.
 - Provider tokens are encrypted using AES-GCM; set `UNICHATGO_APIKEY_KEY` (32-byte key) before running. Users can list/remove their provider tokens via `/api/users/:id/token` (GET/DELETE).
+- Per-user Job Queue + LRU Scheduling: Each user maintains an independent task queue, ensuring response order and resource isolation even under high concurrency.
 - Run locally:
   ```bash
   cd backend

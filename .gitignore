@@ -8,3 +8,4 @@
 config.json
 /backend/data/
 .DS_Store
+/backend/logs/

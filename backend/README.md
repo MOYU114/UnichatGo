@@ -37,7 +37,9 @@ Sample minimal config (`config.json`):
 ```json
 {
   "basic_config": {
-    "server_address": ":8090"
+    "server_address": ":8090",
+    "max_workers": 10,
+    "queue_size" : 100
   },
   "providers": {
     "openai": {
