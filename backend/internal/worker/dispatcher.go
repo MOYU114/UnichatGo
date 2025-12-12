@@ -3,9 +3,8 @@ package worker
 import (
 	"container/list"
 	"sync"
+	"time"
 )
-
-const maxQueueSize = 100
 
 type userQueue struct {
 	jobs     []Job
@@ -13,36 +12,33 @@ type userQueue struct {
 }
 
 type Dispatcher struct {
-	WorkerPool chan chan Job
-	JobQueue   chan Job // interface for outer jobs get in the dispatcher
-	Workers    []*Worker
+	pool     *jobChannelPool
+	JobQueue chan Job // interface for outer jobs get in the dispatcher
+	Manager  *Manager
 
-	mu     sync.Mutex
-	queues map[int64]*userQueue //job queue for each user
-	// lru: handle user's job dispatch order
-	ready     *list.List              //a lru queue to get userid
-	positions map[int64]*list.Element // hash map to save userid's pos, for de
+	mu        sync.Mutex
+	queues    map[int64]*userQueue // job queue for each user
+	ready     *list.List           // LRU queue storing user IDs
+	positions map[int64]*list.Element
 }
 
-func NewDispatcher(maxWorkers, queueSize int, manager *Manager) *Dispatcher {
-	pool := make(chan chan Job, maxWorkers)
+func NewDispatcher(minWorkers, maxWorkers, queueSize int, manager *Manager, idleTimeout time.Duration) *Dispatcher {
+	pool := newJobChannelPool(minWorkers, maxWorkers, idleTimeout, manager)
 	jobQueue := make(chan Job, queueSize)
-	workers := make([]*Worker, maxWorkers)
 
 	d := &Dispatcher{
-		queues:     make(map[int64]*userQueue),
-		ready:      list.New(),
-		positions:  make(map[int64]*list.Element),
-		WorkerPool: pool,
-		JobQueue:   jobQueue,
+		queues:    make(map[int64]*userQueue),
+		ready:     list.New(),
+		positions: make(map[int64]*list.Element),
+		pool:      pool,
+		JobQueue:  jobQueue,
+		Manager:   manager,
 	}
 
-	for i := 0; i < maxWorkers; i++ {
-		worker := NewWorker(pool, manager)
-		worker.Start()
-		workers[i] = worker
+	// Warm up workers to keep previous behavior.
+	for i := 0; i < minWorkers; i++ {
+		d.pool.spawnWorker()
 	}
-	d.Workers = workers
 
 	go d.run()
 	return d
@@ -50,7 +46,7 @@ func NewDispatcher(maxWorkers, queueSize int, manager *Manager) *Dispatcher {
 
 func (d *Dispatcher) run() {
 	for {
-		// dispatch one job of user in the front of lru queue
+		// dispatch one job of user in the front of LRU queue
 		if !d.dispatchOne() {
 			job := <-d.JobQueue
 			d.enqueueJob(job)
@@ -96,7 +92,7 @@ func (d *Dispatcher) enqueueJob(job Job) {
 	d.positions[userID] = elem
 }
 
-// dispatchOne get first user in lru and dispatch its job
+// dispatchOne get first user in LRU and dispatch its job
 func (d *Dispatcher) dispatchOne() bool {
 	d.mu.Lock()
 	elem := d.ready.Front()
@@ -107,7 +103,7 @@ func (d *Dispatcher) dispatchOne() bool {
 		job := q.jobs[0]
 		q.jobs = q.jobs[1:]
 		if len(q.jobs) == 0 {
-			// user only have one job, it'll be handled, user need quit queue
+			// user only have one job, it'll be handled, user needs to quit queue
 			q.enqueued = false
 			d.ready.Remove(elem)
 			delete(d.positions, userID)
@@ -117,8 +113,7 @@ func (d *Dispatcher) dispatchOne() bool {
 		}
 		d.mu.Unlock()
 
-		// give a job to the worker in the pool
-		workerChan := <-d.WorkerPool
+		workerChan := d.pool.acquire()
 		workerChan <- job
 		return true
 	}

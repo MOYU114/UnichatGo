@@ -41,7 +41,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("init assistant service: %v", err)
 	}
-	workerCfg := worker.DispatcherConfig{MaxWorkers: cfg.BasicConfig.MaxWorkers, QueueSize: cfg.BasicConfig.QueueSize}
+	workerCfg := worker.DispatcherConfig{
+		MinWorkers:        cfg.BasicConfig.MinWorkers,
+		MaxWorkers:        cfg.BasicConfig.MaxWorkers,
+		QueueSize:         cfg.BasicConfig.QueueSize,
+		WorkerIdleTimeout: cfg.BasicConfig.WorkerIdleTimeout * time.Second,
+	}
 	authService := auth.NewService(db, 24*time.Hour)
 	handlers := api.NewHandler(assistantService, authService, workerCfg)
 

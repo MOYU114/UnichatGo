@@ -1,8 +1,10 @@
 {
   "basic_config":{
     "server_address": ":8090",
+    "min_workers": 3,
     "max_workers": 10,
-    "queue_size" : 100
+    "queue_size" : 100,
+    "worker_idle_timeout": 30
   },
   "providers": {
     "openai": {

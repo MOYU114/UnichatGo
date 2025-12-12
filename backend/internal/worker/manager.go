@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"unichatgo/internal/models"
 	"unichatgo/internal/service/ai"
@@ -41,6 +42,7 @@ type JobType string
 const (
 	Init   JobType = "init"
 	Stream JobType = "stream"
+	Stop   JobType = "stop"
 )
 
 type Job struct {
@@ -64,6 +66,7 @@ type Manager struct {
 
 var pendingSeq int64
 
+// for mock test
 var (
 	aiFactory = func(provider, model, token string) (AICalling, error) {
 		return ai.NewAiService(provider, model, token)
@@ -74,18 +77,27 @@ var (
 )
 
 type DispatcherConfig struct {
-	MaxWorkers int
-	QueueSize  int
+	MinWorkers        int
+	MaxWorkers        int
+	QueueSize         int
+	WorkerIdleTimeout time.Duration
 }
 
 const (
-	defaultWorkerCount = 10
-	defaultQueueSize   = 100
+	defaultMinWorkers = 3
+	defaultMaxWorkers = 10
+	defaultQueueSize  = 100
 )
 
 func NewManager(asst Assistant, cfg DispatcherConfig) *Manager {
+	if cfg.MinWorkers <= 0 {
+		cfg.MinWorkers = defaultMinWorkers
+	}
 	if cfg.MaxWorkers <= 0 {
-		cfg.MaxWorkers = defaultWorkerCount
+		cfg.MaxWorkers = defaultMaxWorkers
+	}
+	if cfg.MaxWorkers < cfg.MinWorkers {
+		cfg.MaxWorkers = cfg.MinWorkers
 	}
 	if cfg.QueueSize <= 0 {
 		cfg.QueueSize = defaultQueueSize
@@ -94,7 +106,8 @@ func NewManager(asst Assistant, cfg DispatcherConfig) *Manager {
 		state: make(map[int64]*userState),
 		asst:  asst,
 	}
-	m.dispatcher = NewDispatcher(cfg.MaxWorkers, cfg.QueueSize, m)
+	// cfg.WorkerIdleTimeout check in pool.go
+	m.dispatcher = NewDispatcher(cfg.MinWorkers, cfg.MaxWorkers, cfg.QueueSize, m, cfg.WorkerIdleTimeout)
 	return m
 }
 

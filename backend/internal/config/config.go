@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Config represents runtime configuration for the service.
@@ -32,9 +33,11 @@ type ProviderConfig struct {
 }
 
 type BasicConfig struct {
-	ServerAddress string `json:"server_address"`
-	MaxWorkers    int    `json:"max_workers"`
-	QueueSize     int    `json:"queue_size"`
+	ServerAddress     string        `json:"server_address"`
+	MinWorkers        int           `json:"min_workers"`
+	MaxWorkers        int           `json:"max_workers"`
+	QueueSize         int           `json:"queue_size"`
+	WorkerIdleTimeout time.Duration `json:"worker_idle_timeout"`
 }
 
 // Load reads configuration from the provided path (defaults to config.json).

@@ -64,6 +64,7 @@ for msg in "${sentences[@]}"; do
 	echo "Message '$msg' took $((end - start)) seconds"
 done
 
+start=$(date +%s)
 echo "Conversation history for session $session_id:"
 sqlite3 data/app.db "SELECT role,content FROM messages WHERE session_id=$session_id ORDER BY id;"
 
@@ -75,9 +76,16 @@ echo "Re-login: $resp"
 update_csrf_header
 
 echo "Reopen conversation $session_id after re-login"
-req POST "/users/$user_id/conversation/start" "{\"provider\":\"$PROVIDER\",\"session_id\":$session_id,\"model_type\":\"$MODEL2\"}" "${CSRF_HEADER[@]}"
+resume_resp=$(req POST "/users/$user_id/conversation/start" "{\"provider\":\"$PROVIDER\",\"session_id\":$session_id,\"model_type\":\"$MODEL2\"}" "${CSRF_HEADER[@]}")
+echo "Resume response: $resume_resp"
+end=$(date +%s)
+echo "Restart conversation took $((end - start)) seconds"
 
-send_msg "What was our last conversation?"
+followup="What was our last conversation?"
+start=$(date +%s)
+send_msg "$followup"
+end=$(date +%s)
+echo "Message '$followup' took $((end - start)) seconds"
 
 echo "Conversation history after re-login:"
 sqlite3 data/app.db "SELECT role,content FROM messages WHERE session_id=$session_id ORDER BY id;"
