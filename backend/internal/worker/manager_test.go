@@ -270,6 +270,145 @@ func TestDispatcherQueuesWhenWorkerBusy(t *testing.T) {
 	}
 }
 
+func TestManagerHighLoadAllowsOtherUsers(t *testing.T) {
+	mockAsst := newMockAssistant()
+	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 1, MaxWorkers: 3, QueueSize: 10})
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+
+	origAI := aiFactory
+	origTitle := titleFactory
+	defer func() {
+		aiFactory = origAI
+		titleFactory = origTitle
+	}()
+	aiFactory = func(provider, model, token string) (AICalling, error) {
+		if provider == "slow" {
+			return &fakeBlockingAI{block: block, started: started}, nil
+		}
+		return &fakeAI{}, nil
+	}
+	titleFactory = func(provider, model, token string) (AsCalling, error) {
+		return &fakeAS{}, nil
+	}
+
+	slowSession, err := manager.InitSession(SessionRequest{
+		UserID:   1,
+		Provider: "slow",
+		Model:    "m",
+		Token:    "tok",
+	})
+	if err != nil {
+		t.Fatalf("slow session init: %v", err)
+	}
+	fastSession, err := manager.InitSession(SessionRequest{
+		UserID:   2,
+		Provider: "fast",
+		Model:    "m",
+		Token:    "tok",
+	})
+	if err != nil {
+		t.Fatalf("fast session init: %v", err)
+	}
+
+	slowDone := make(chan error, 1)
+	go func() {
+		_, _, err := manager.Stream(StreamRequest{
+			SessionRequest: SessionRequest{
+				UserID:    1,
+				SessionID: slowSession.ID,
+				Provider:  "slow",
+				Model:     "m",
+				Token:     "tok",
+				Message: &models.Message{
+					UserID:    1,
+					SessionID: slowSession.ID,
+					Role:      models.RoleUser,
+					Content:   "slow",
+				},
+			},
+		})
+		slowDone <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatalf("slow task did not start")
+	}
+
+	fastErr := make(chan error, 1)
+	go func() {
+		_, _, err := manager.Stream(StreamRequest{
+			SessionRequest: SessionRequest{
+				UserID:    2,
+				SessionID: fastSession.ID,
+				Provider:  "fast",
+				Model:     "m",
+				Token:     "tok",
+				Message: &models.Message{
+					UserID:    2,
+					SessionID: fastSession.ID,
+					Role:      models.RoleUser,
+					Content:   "fast",
+				},
+			},
+		})
+		fastErr <- err
+	}()
+
+	select {
+	case err := <-fastErr:
+		if err != nil {
+			t.Fatalf("fast stream error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("fast stream blocked but should complete")
+	}
+
+	close(block)
+	if err := <-slowDone; err != nil {
+		t.Fatalf("slow stream error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 3; i <= 15; i++ {
+		wg.Add(1)
+		go func(uid int) {
+			defer wg.Done()
+			session, err := manager.InitSession(SessionRequest{
+				UserID:   int64(uid),
+				Provider: "fast",
+				Model:    "m",
+				Token:    "tok",
+			})
+			if err != nil {
+				t.Errorf("init session user %d: %v", uid, err)
+				return
+			}
+			if _, _, err := manager.Stream(StreamRequest{
+				SessionRequest: SessionRequest{
+					UserID:    int64(uid),
+					SessionID: session.ID,
+					Provider:  "fast",
+					Model:     "m",
+					Token:     "tok",
+					Message: &models.Message{
+						UserID:    int64(uid),
+						SessionID: session.ID,
+						Role:      models.RoleUser,
+						Content:   "multi",
+					},
+				},
+			}); err != nil {
+				t.Errorf("stream user %d: %v", uid, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
 // --- helpers ---
 
 type mockAssistant struct {

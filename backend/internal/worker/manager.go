@@ -58,13 +58,16 @@ type Assistant interface {
 }
 
 type Manager struct {
-	mu         sync.Mutex
-	dispatcher *Dispatcher
-	state      map[int64]*userState
-	asst       Assistant
+	mu             sync.Mutex
+	dispatcher     *Dispatcher
+	state          map[int64]*userState
+	asst           Assistant
+	enqueueTimeout time.Duration
 }
 
 var pendingSeq int64
+
+var ErrDispatcherBusy = errors.New("dispatcher is busy")
 
 // for mock test
 var (
@@ -81,12 +84,14 @@ type DispatcherConfig struct {
 	MaxWorkers        int
 	QueueSize         int
 	WorkerIdleTimeout time.Duration
+	EnqueueTimeout    time.Duration
 }
 
 const (
-	defaultMinWorkers = 3
-	defaultMaxWorkers = 10
-	defaultQueueSize  = 100
+	defaultMinWorkers    = 3
+	defaultMaxWorkers    = 10
+	defaultQueueSize     = 100
+	defaultEnqueueTimout = time.Second
 )
 
 func NewManager(asst Assistant, cfg DispatcherConfig) *Manager {
@@ -99,12 +104,19 @@ func NewManager(asst Assistant, cfg DispatcherConfig) *Manager {
 	if cfg.MaxWorkers < cfg.MinWorkers {
 		cfg.MaxWorkers = cfg.MinWorkers
 	}
+	if cfg.EnqueueTimeout <= 0 {
+		cfg.EnqueueTimeout = defaultEnqueueTimout
+	}
 	if cfg.QueueSize <= 0 {
 		cfg.QueueSize = defaultQueueSize
 	}
+	if cfg.WorkerIdleTimeout <= 0 {
+		cfg.WorkerIdleTimeout = defaultWorkerIdle
+	}
 	m := &Manager{
-		state: make(map[int64]*userState),
-		asst:  asst,
+		state:          make(map[int64]*userState),
+		asst:           asst,
+		enqueueTimeout: cfg.EnqueueTimeout,
 	}
 	// cfg.WorkerIdleTimeout check in pool.go
 	m.dispatcher = NewDispatcher(cfg.MinWorkers, cfg.MaxWorkers, cfg.QueueSize, m, cfg.WorkerIdleTimeout)
@@ -122,6 +134,25 @@ func (m *Manager) getState(userID int64) *userState {
 	state := newUserState()
 	m.state[userID] = state
 	return state
+}
+
+func (m *Manager) enqueueJob(job Job) error {
+	if m.enqueueTimeout <= 0 {
+		select {
+		case m.dispatcher.JobQueue <- job:
+			return nil
+		default:
+			return ErrDispatcherBusy
+		}
+	}
+	timer := time.NewTimer(m.enqueueTimeout)
+	defer timer.Stop()
+	select {
+	case m.dispatcher.JobQueue <- job:
+		return nil
+	case <-timer.C:
+		return ErrDispatcherBusy
+	}
 }
 
 func (m *Manager) InitSession(req SessionRequest) (*models.Session, error) {
@@ -145,12 +176,9 @@ func (m *Manager) InitSession(req SessionRequest) (*models.Session, error) {
 		},
 	}
 
-	select {
-	case m.dispatcher.JobQueue <- job:
-	default:
-		return nil, errors.New("job queue full")
+	if err := m.enqueueJob(job); err != nil {
+		return nil, err
 	}
-
 	ret := <-waitCh
 	return ret.session, ret.err
 }
@@ -171,12 +199,9 @@ func (m *Manager) Stream(req StreamRequest) (*models.Message, string, error) {
 			resultCh: resultCh,
 		},
 	}
-	select {
-	case m.dispatcher.JobQueue <- job:
-	default:
-		return nil, "", errors.New("task queue full")
+	if err := m.enqueueJob(job); err != nil {
+		return nil, "", err
 	}
-
 	ret := <-resultCh
 	return ret.aiMessage, ret.title, ret.err
 }

@@ -114,6 +114,8 @@ func (d *Dispatcher) dispatchOne() bool {
 		d.mu.Unlock()
 
 		workerChan := d.pool.acquire()
+		workerID := d.pool.workerID(workerChan)
+		debugLog("[dispatcher] assign job %s for user %d to worker-%d", job.Type, userID, workerID)
 		workerChan <- job
 		return true
 	}

@@ -38,8 +38,10 @@ Sample minimal config (`config.json`):
 {
   "basic_config": {
     "server_address": ":8090",
+    "min_workers": 3,
     "max_workers": 10,
-    "queue_size" : 100
+    "queue_size" : 100,
+    "worker_idle_timeout": 30
   },
   "providers": {
     "openai": {
@@ -81,6 +83,7 @@ export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)  # 32-byte key used to en
 export UNICHATGO_DB=sqlite3                              # or mysql
 export GOOGLE_API_KEY=...                              # Optional: enables Google Search tool
 export GOOGLE_SEARCH_ENGINE_ID=...                     # Optional: enables Google Search tool
+export UNICHATGO_WORKER_DEBUG=1                        # Optional: verbose worker scheduling logs
 ```
 ### Token Management APIs
 - `POST /api/users/:id/token`: upsert encrypted provider token.

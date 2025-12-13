@@ -33,7 +33,7 @@ update_csrf_header() {
   fi
   CSRF_HEADER=("-H" "X-CSRF-Token: $token")
 }
-
+global_start=$(date +%s)
 echo "Registering user $USERNAME"
 resp=$(req POST "/users/register" "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}")
 echo "Register response: $resp"
@@ -92,4 +92,5 @@ sqlite3 data/app.db "SELECT role,content FROM messages WHERE session_id=$session
 
 req DELETE "/users/$user_id" "" "${CSRF_HEADER[@]}"
 
-echo "Flow completed"
+global_end=$(date +%s)
+echo "Flow completed, whole conversation took $((global_end - global_start)) seconds"

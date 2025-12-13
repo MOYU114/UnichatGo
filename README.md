@@ -6,10 +6,10 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 - Backend (local):
   ```bash
   cd backend
+  #  add needed env into current shell, example: 
   export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
-  export GOOGLE_API_KEY=your-google-api-key         # optional, enables Google Search tool
-  export GOOGLE_SEARCH_ENGINE_ID=your-search-engine # optional, enables Google Search tool
-  go run ./
+  ...
+  go run main.go
   ```
 - Frontend (local):
   ```bash
@@ -19,9 +19,9 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
   ```
 - Docker Compose (with persisted DB):
   ```bash
+  #  add needed env into current shell, example: 
   export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
-  export GOOGLE_API_KEY=...
-  export GOOGLE_SEARCH_ENGINE_ID=...
+  ...
   docker compose up --build
   ```
 - Tear down containers: `docker compose down`
@@ -29,9 +29,9 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 ## Repository Layout
 ```
 .
-├── backend/          # Go server (users, sessions, SSE)
-├── frontend/         # Vue 3 + Vite client
-├── deploy/           # Reserved for infra scripts
+├── backend/            # Go server (users, sessions, SSE)
+├── frontend/           # Vue 3 + Vite client
+├── docker-compose.yml  # Docker Compose File
 └── README.md
 ```
 
@@ -47,8 +47,10 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 - Run locally:
   ```bash
   cd backend
+  #  add needed env into current shell, example: 
   export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
-  go run ./
+  ...
+  go run main.go
   ```
 - Tests: `cd backend && go test ./...` (requires network to fetch modules on first run).
 - SQLite path: `./data/app.db` by default (see `backend/config.json`). Mount `backend/data` when running in Docker.

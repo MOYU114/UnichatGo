@@ -248,6 +248,26 @@ func TestStartConversationDuplicateRequests(t *testing.T) {
 	}
 }
 
+func TestStartConversationBackpressure(t *testing.T) {
+	router, db, handler := newTestServer(t)
+	defer db.Close()
+	client := newAPITestClient(t, router)
+
+	userID, _ := registerAndLogin(t, client)
+	setTokenResp := client.DoJSON(http.MethodPost,
+		fmt.Sprintf("/api/users/%d/token", userID),
+		map[string]string{"provider": "openai", "token": "mock"},
+		nil)
+	assertStatus(t, setTokenResp, http.StatusNoContent)
+
+	handler.workers.(*mockWorker).initErr = worker.ErrDispatcherBusy
+	resp := client.DoJSON(http.MethodPost,
+		fmt.Sprintf("/api/users/%d/conversation/start", userID),
+		map[string]any{"provider": "openai", "session_id": 0, "model_type": "gpt-5-nano"},
+		nil)
+	assertStatus(t, resp, http.StatusTooManyRequests)
+}
+
 func TestCaptureInputValidation(t *testing.T) {
 	router, db, handler := newTestServer(t)
 	defer db.Close()
@@ -351,6 +371,51 @@ func TestCaptureInputSSEError(t *testing.T) {
 	}
 	if !strings.Contains(events[1].Data, "mock failure") {
 		t.Fatalf("missing error payload: %s", events[1].Data)
+	}
+}
+
+func TestCaptureInputBackpressure(t *testing.T) {
+	router, db, handler := newTestServer(t)
+	defer db.Close()
+	client := newAPITestClient(t, router)
+	userID, _ := registerAndLogin(t, client)
+
+	setTokenResp := client.DoJSON(http.MethodPost,
+		fmt.Sprintf("/api/users/%d/token", userID),
+		map[string]string{"provider": "openai", "token": "mock"},
+		nil)
+	assertStatus(t, setTokenResp, http.StatusNoContent)
+
+	startResp := client.DoJSON(http.MethodPost,
+		fmt.Sprintf("/api/users/%d/conversation/start", userID),
+		map[string]any{"provider": "openai", "session_id": 0, "model_type": "gpt"},
+		nil)
+	assertStatus(t, startResp, http.StatusAccepted)
+	var body struct {
+		SessionID int64 `json:"sessionId"`
+	}
+	decodeJSON(t, startResp.Body.Bytes(), &body)
+
+	mw := handler.workers.(*mockWorker)
+	mw.streamErr = worker.ErrDispatcherBusy
+
+	resp := client.PostSSE(
+		fmt.Sprintf("/api/users/%d/conversation/msg", userID),
+		map[string]any{
+			"session_id": body.SessionID,
+			"content":    "hello again",
+			"provider":   "openai",
+			"model_type": "gpt",
+		},
+		nil,
+	)
+	assertStatus(t, resp, http.StatusOK)
+	events := parseSSE(t, resp.Body.String())
+	if len(events) != 2 || events[1].Name != "error" {
+		t.Fatalf("expected ack + error, got %#v", events)
+	}
+	if !strings.Contains(events[1].Data, "server is busy") {
+		t.Fatalf("expected busy message, got %s", events[1].Data)
 	}
 }
 
@@ -529,6 +594,7 @@ func registerAndLogin(t *testing.T, client *apiTestClient) (int64, string) {
 type mockWorker struct {
 	assistant *assistant.Service
 	streamErr error
+	initErr   error
 }
 
 func newMockWorker(asst *assistant.Service) *mockWorker {
@@ -536,6 +602,10 @@ func newMockWorker(asst *assistant.Service) *mockWorker {
 }
 
 func (m *mockWorker) InitSession(req worker.SessionRequest) (*models.Session, error) {
+	if err := m.initErr; err != nil {
+		m.initErr = nil
+		return nil, err
+	}
 	ctx := req.Context
 	if ctx == nil {
 		ctx = context.Background()

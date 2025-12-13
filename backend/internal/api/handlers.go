@@ -105,7 +105,11 @@ func (h *Handler) registerUser(c *gin.Context) {
 	}
 	user, err := h.assistant.RegisterUser(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if errors.Is(err, worker.ErrDispatcherBusy) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "server is busy, please retry"})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{
@@ -232,7 +236,11 @@ func (h *Handler) startConversation(c *gin.Context) {
 		Token:     token,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if errors.Is(err, worker.ErrDispatcherBusy) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "server is busy, please retry"})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{
@@ -405,7 +413,11 @@ func (h *Handler) captureInput(c *gin.Context) {
 	}
 	aiMessage, title, err := h.workers.Stream(streamReq)
 	if err != nil {
-		_ = sendEvent("error", gin.H{"message": err.Error()})
+		msg := err.Error()
+		if errors.Is(err, worker.ErrDispatcherBusy) {
+			msg = "server is busy, please retry"
+		}
+		_ = sendEvent("error", gin.H{"message": msg})
 		return
 	}
 	_, err = h.assistant.AppendMessageToSession(c.Request.Context(), aiMessage.UserID, aiMessage.SessionID, aiMessage.Role, aiMessage.Content)
