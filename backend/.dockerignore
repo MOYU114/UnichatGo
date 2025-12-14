@@ -1,0 +1,3 @@
+# Ignore data stores (SQLite/MySQL) to avoid bundling DB files into images
+/data/
+logs/
