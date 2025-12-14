@@ -137,6 +137,23 @@ function handleRemoveAttachment(fileId) {
       >
         <div class="message__role">{{ message.role === 'user' ? 'You' : 'Assistant' }}</div>
         <div class="message__content" v-html="renderMarkdown(message.content)"></div>
+        <div v-if="message.attachments?.length" class="message__attachments">
+          <div
+            v-for="file in message.attachments"
+            :key="`${message.id}_${file.id}`"
+            class="message-attachment"
+          >
+            <div
+              class="message-attachment__icon"
+              :class="file.mime?.startsWith('image/') ? 'is-image' : 'is-file'"
+            >
+              {{ file.mime?.startsWith('image/') ? 'IMG' : 'FILE' }}
+            </div>
+            <div class="message-attachment__name">
+              {{ file.name || `file_${file.id}` }}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -150,6 +167,12 @@ function handleRemoveAttachment(fileId) {
       />
       <div v-if="attachments.length" class="composer__attachments">
         <div v-for="file in attachments" :key="file.id" class="attachment-chip">
+          <img
+            v-if="file.preview && file.mime?.startsWith('image/')"
+            :src="file.preview"
+            alt="preview"
+            class="attachment-chip__thumb"
+          />
           <span class="attachment-chip__name">{{ file.name }}</span>
           <button
             type="button"
@@ -267,6 +290,50 @@ function handleRemoveAttachment(fileId) {
   line-height: 1.5;
 }
 
+.message__attachments {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.message-attachment {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.2rem 0.4rem;
+  background: #f3f4f6;
+  font-size: 0.75rem;
+  color: #374151;
+}
+
+.message-attachment__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 600;
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0.35rem;
+}
+
+.message-attachment__icon.is-file {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.message-attachment__name {
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .message__content :global(pre) {
   background: #1f2937;
   color: #f9fafb;
@@ -309,6 +376,14 @@ function handleRemoveAttachment(fileId) {
   padding: 0.15rem 0.5rem;
   font-size: 0.85rem;
   color: #1f2937;
+}
+
+.attachment-chip__thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-right: 0.4rem;
 }
 
 .attachment-chip__name {

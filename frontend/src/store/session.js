@@ -76,6 +76,16 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  function clearAttachmentPreviews(sessionId) {
+    const list = attachmentsBySession.value[sessionId]
+    if (!list) return
+    list.forEach((item) => {
+      if (item?.preview) {
+        URL.revokeObjectURL(item.preview)
+      }
+    })
+  }
+
   function upsertSession(data) {
     const normalized = normalizeSession(data)
     const existingIndex = sessions.value.findIndex((item) => item.id === normalized.id)
@@ -183,6 +193,12 @@ export const useSessionStore = defineStore('session', () => {
 
     const userMessages = ensureMessageList(sessionId)
     const attachments = attachmentsBySession.value[sessionId] || []
+    const outgoingAttachments = attachments.map((file) => ({
+      id: file.id,
+      name: file.name,
+      mime: file.mime,
+      type: file.mime?.startsWith('image/') ? 'image' : 'file',
+    }))
     let tempAssistantIndex = -1
     let assistantBuffer = ''
 
@@ -203,6 +219,7 @@ export const useSessionStore = defineStore('session', () => {
               role: payload.message.role,
               content: payload.message.content,
               created_at: payload.message.created_at,
+              attachments: outgoingAttachments,
             })
           },
           onStream: (payload) => {
@@ -223,7 +240,10 @@ export const useSessionStore = defineStore('session', () => {
             const list = userMessages
             const userIndex = list.findIndex((msg) => msg.id === payload.user_message.id)
             if (userIndex !== -1) {
-              list[userIndex] = payload.user_message
+              list[userIndex] = {
+                ...payload.user_message,
+                attachments: outgoingAttachments,
+              }
             }
             if (tempAssistantIndex !== -1) {
               list[tempAssistantIndex] = payload.ai_message
@@ -238,6 +258,7 @@ export const useSessionStore = defineStore('session', () => {
                 updatedAt: payload.ai_message.created_at,
               })
             }
+            clearAttachmentPreviews(sessionId)
             setAttachments(sessionId, [])
           },
           onError: (payload) => {
@@ -253,6 +274,7 @@ export const useSessionStore = defineStore('session', () => {
       )
     } finally {
       sending.value = false
+      clearAttachmentPreviews(sessionId)
       setAttachments(sessionId, [])
     }
   }
@@ -280,6 +302,7 @@ export const useSessionStore = defineStore('session', () => {
           name: data.file_name,
           size: data.size,
           mime: data.mime,
+          preview: file.type?.startsWith('image/') ? URL.createObjectURL(file) : '',
         })
       }
       setAttachments(sessionId, uploaded)
@@ -296,10 +319,13 @@ export const useSessionStore = defineStore('session', () => {
     if (!sessionId || !attachmentsBySession.value[sessionId]) {
       return
     }
-    setAttachments(
-      sessionId,
-      attachmentsBySession.value[sessionId].filter((item) => item.id !== fileId),
-    )
+    const next = attachmentsBySession.value[sessionId].filter((item) => {
+      if (item.id === fileId && item.preview) {
+        URL.revokeObjectURL(item.preview)
+      }
+      return item.id !== fileId
+    })
+    setAttachments(sessionId, next)
   }
 
   async function saveToken(providerName, token) {
