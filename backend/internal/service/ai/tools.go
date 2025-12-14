@@ -235,7 +235,7 @@ func (t *tempFileReader) run(ctx context.Context, params *tempFileReaderParams) 
 		return fmt.Sprintf("File: %s has no readable text content.", target.FileName), nil
 	}
 	if chunkIndex >= totalChunks {
-		return "", fmt.Errorf("chunk_index %d out of range, total chunks %d", chunkIndex, totalChunks)
+		chunkIndex = totalChunks - 1
 	}
 	start := chunkIndex * chunkSize
 	end := start + chunkSize

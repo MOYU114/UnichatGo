@@ -182,6 +182,7 @@ export const useSessionStore = defineStore('session', () => {
     ensureMessageList(sessionId)
 
     const userMessages = ensureMessageList(sessionId)
+    const attachments = attachmentsBySession.value[sessionId] || []
     let tempAssistantIndex = -1
     let assistantBuffer = ''
 
@@ -193,6 +194,7 @@ export const useSessionStore = defineStore('session', () => {
           content,
           provider: provider.value,
           model_type: model.value,
+          file_ids: attachments.map((item) => item.id),
         },
         {
           onAck: (payload) => {
@@ -239,7 +241,6 @@ export const useSessionStore = defineStore('session', () => {
             setAttachments(sessionId, [])
           },
           onError: (payload) => {
-            setAttachments(sessionId, [])
             if (typeof payload?.message === 'string' && payload.message.includes('api token not configured')) {
               markTokenMissing(provider.value)
               tokenDialogVisible.value = true
@@ -270,9 +271,8 @@ export const useSessionStore = defineStore('session', () => {
         sessionId = await createSession()
       }
       ensureMessageList(sessionId)
-      const uploaded = attachmentsBySession.value[sessionId]
-        ? [...attachmentsBySession.value[sessionId]]
-        : []
+      const uploaded =
+        attachmentsBySession.value[sessionId] ? [...attachmentsBySession.value[sessionId]] : []
       for (const file of files) {
         const data = await uploadSessionFile(authStore.user.id, sessionId, file)
         uploaded.push({

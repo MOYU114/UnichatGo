@@ -470,7 +470,7 @@ func (m *mockAssistant) UpdateTempFileSummary(ctx context.Context, fileID int64,
 
 type fakeAI struct{}
 
-func (f *fakeAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+func (f *fakeAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, imageFiles []*models.TempFile, callback func(string) error) (*models.Message, error) {
 	if callback != nil {
 		_ = callback("chunk")
 	}
@@ -493,7 +493,7 @@ type fakeBlockingAI struct {
 	once    sync.Once
 }
 
-func (f *fakeBlockingAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+func (f *fakeBlockingAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, imageFiles []*models.TempFile, callback func(string) error) (*models.Message, error) {
 	f.once.Do(func() {
 		if f.started != nil {
 			close(f.started)
@@ -507,7 +507,7 @@ type labeledAI struct {
 	onRun func(label string)
 }
 
-func (f *labeledAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+func (f *labeledAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, imageFiles []*models.TempFile, callback func(string) error) (*models.Message, error) {
 	if f.onRun != nil {
 		f.onRun(message.Content)
 	}

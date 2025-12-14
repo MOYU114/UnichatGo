@@ -26,6 +26,7 @@ type WorkerManager interface {
 	Stream(worker.StreamRequest) (*models.Message, string, error)
 	ResetUser(userID int64)
 	Purge(userID, sessionID int64)
+	InvalidateTempFiles(userID, sessionID int64)
 }
 
 // Handler wires HTTP routes to the assistant service and manages per-user AI workers.
@@ -321,10 +322,11 @@ func (h *Handler) getSessionMessages(c *gin.Context) {
 
 // User input interface
 type inputRequest struct {
-	SessionID int64  `json:"session_id"`
-	Content   string `json:"content"`
-	ModelType string `json:"model_type"`
-	Provider  string `json:"provider"`
+	SessionID int64   `json:"session_id"`
+	Content   string  `json:"content"`
+	ModelType string  `json:"model_type"`
+	Provider  string  `json:"provider"`
+	FileIDs   []int64 `json:"file_ids"`
 }
 
 func (h *Handler) captureInput(c *gin.Context) {
@@ -340,6 +342,15 @@ func (h *Handler) captureInput(c *gin.Context) {
 
 	if req.SessionID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
+		return
+	}
+	files, err := h.resolveTempFiles(c.Request.Context(), userID, req.SessionID, req.FileIDs)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	message, err := h.assistant.AppendMessageToSession(c.Request.Context(), userID, req.SessionID, models.RoleUser, req.Content)
@@ -412,6 +423,7 @@ func (h *Handler) captureInput(c *gin.Context) {
 			Provider:  req.Provider,
 			Model:     req.ModelType,
 			Token:     token,
+			Files:     files,
 			Message:   message,
 		},
 		ChunkFn: func(chunk string) error {
@@ -562,6 +574,44 @@ func setCookie(c *gin.Context, ck *http.Cookie) {
 	http.SetCookie(c.Writer, ck)
 }
 
+func (h *Handler) resolveTempFiles(ctx context.Context, userID, sessionID int64, fileIDs []int64) ([]*models.TempFile, error) {
+	if len(fileIDs) == 0 {
+		return nil, nil
+	}
+	seen := make(map[int64]struct{}, len(fileIDs))
+	ids := make([]int64, 0, len(fileIDs))
+	for _, id := range fileIDs {
+		if id <= 0 {
+			return nil, errors.New("invalid file id")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	files, err := h.assistant.GetTempFilesByIDs(ctx, userID, sessionID, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	byID := make(map[int64]*models.TempFile, len(files))
+	for _, f := range files {
+		byID[f.ID] = f
+	}
+	ordered := make([]*models.TempFile, 0, len(ids))
+	for _, id := range ids {
+		f, ok := byID[id]
+		if !ok {
+			return nil, fmt.Errorf("file id %d not found", id)
+		}
+		ordered = append(ordered, f)
+	}
+	return ordered, nil
+}
+
 const (
 	maxUploadBytes   = 10 << 20 // 10 MB
 	userStorageLimit = 50 << 20 // 50 MB per user
@@ -574,6 +624,7 @@ var allowedContentTypes = []string{
 	"application/json",
 	"application/msword",
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"image/",
 }
 
 func isAllowedContentType(ct string) bool {
@@ -646,6 +697,7 @@ func (h *Handler) filesUpload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "record file failed"})
 		return
 	}
+	h.workers.InvalidateTempFiles(userID, sessionID)
 	c.JSON(http.StatusCreated, gin.H{
 		"file_id":   fileID,
 		"file_name": finalName,

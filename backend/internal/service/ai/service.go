@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -31,6 +32,8 @@ type aiService struct {
 	agent     *react.Agent
 	mu        sync.RWMutex
 }
+
+const maxImageInlineBytes = 5 << 20
 
 func NewAiService(provider string, modelType string, token string) (*aiService, error) {
 	var chatModel model.ToolCallingChatModel
@@ -111,7 +114,7 @@ func NewAiService(provider string, modelType string, token string) (*aiService, 
 }
 
 // StreamChat Using stream chat to handle Ai output
-func (s *aiService) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
+func (s *aiService) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, imageFiles []*models.TempFile, callback func(string) error) (*models.Message, error) {
 	if message == nil {
 		return nil, errors.New("message cannot be nil")
 	}
@@ -124,7 +127,7 @@ func (s *aiService) StreamChat(ctx context.Context, message *models.Message, pre
 	}
 	// append latest user message
 	s.appendHistory(message.SessionID, message)
-	messagesEino := s.convertMessages(message.SessionID)
+	messagesEino := s.convertMessages(message.SessionID, imageFiles)
 
 	var (
 		streamReader *schema.StreamReader[*schema.Message]
@@ -165,13 +168,13 @@ func (s *aiService) StreamChat(ctx context.Context, message *models.Message, pre
 	return response, nil
 }
 
-func (s *aiService) convertMessages(sessionID int64) []*schema.Message {
+func (s *aiService) convertMessages(sessionID int64, imageFiles []*models.TempFile) []*schema.Message {
 	s.mu.RLock()
 	history := s.histories[sessionID]
 	s.mu.RUnlock()
 
 	messages := make([]*schema.Message, 0, len(history))
-	for _, msg := range history {
+	for idx, msg := range history {
 		var role schema.RoleType
 		switch msg.Role {
 		case models.RoleUser:
@@ -184,10 +187,37 @@ func (s *aiService) convertMessages(sessionID int64) []*schema.Message {
 			role = schema.User
 		}
 
-		messages = append(messages, &schema.Message{
-			Role:    role,
-			Content: msg.Content,
-		})
+		schemaMsg := &schema.Message{Role: role}
+		if idx == len(history)-1 && role == schema.User && len(imageFiles) > 0 {
+			parts := []schema.MessageInputPart{
+				{Type: schema.ChatMessagePartTypeText, Text: msg.Content},
+			}
+			for _, img := range imageFiles {
+				if img == nil {
+					continue
+				}
+				data, err := os.ReadFile(img.StoredPath)
+				if err != nil {
+					log.Printf("read image %s failed: %v", img.StoredPath, err)
+					continue
+				}
+				if len(data) > maxImageInlineBytes {
+					data = data[:maxImageInlineBytes]
+				}
+				encoded := base64.StdEncoding.EncodeToString(data)
+				parts = append(parts, schema.MessageInputPart{
+					Type: schema.ChatMessagePartTypeImageURL,
+					Image: &schema.MessageInputImage{
+						MessagePartCommon: schema.MessagePartCommon{Base64Data: &encoded, MIMEType: img.MimeType},
+						Detail:            schema.ImageURLDetailAuto,
+					},
+				})
+			}
+			schemaMsg.UserInputMultiContent = parts
+		} else {
+			schemaMsg.Content = msg.Content
+		}
+		messages = append(messages, schemaMsg)
 	}
 	return messages
 }

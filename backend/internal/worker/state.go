@@ -21,7 +21,7 @@ type AsCalling interface {
 }
 
 type AICalling interface {
-	StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error)
+	StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, imageFiles []*models.TempFile, callback func(string) error) (*models.Message, error)
 }
 type sessionResources struct {
 	ai       AICalling
@@ -147,7 +147,11 @@ func (s *userState) getResources(sessionID int64) *sessionResources {
 
 func (s *userState) setFiles(sessionID int64, files []*models.TempFile) {
 	s.mu.Lock()
-	s.files[sessionID] = files
+	if files == nil {
+		delete(s.files, sessionID)
+	} else {
+		s.files[sessionID] = files
+	}
 	s.mu.Unlock()
 }
 
@@ -155,4 +159,10 @@ func (s *userState) getFiles(sessionID int64) []*models.TempFile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.files[sessionID]
+}
+
+func (s *userState) clearFiles(sessionID int64) {
+	s.mu.Lock()
+	delete(s.files, sessionID)
+	s.mu.Unlock()
 }

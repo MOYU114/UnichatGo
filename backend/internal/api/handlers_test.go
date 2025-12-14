@@ -695,8 +695,9 @@ func (m *mockWorker) Stream(req worker.StreamRequest) (*models.Message, string, 
 	return resp, "Mock Title", nil
 }
 
-func (m *mockWorker) ResetUser(int64)    {}
-func (m *mockWorker) Purge(int64, int64) {}
+func (m *mockWorker) ResetUser(int64)                  {}
+func (m *mockWorker) Purge(int64, int64)               {}
+func (m *mockWorker) InvalidateTempFiles(int64, int64) {}
 
 type apiTestClient struct {
 	t       *testing.T

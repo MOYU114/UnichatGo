@@ -14,7 +14,6 @@ import (
 	"unichatgo/internal/models"
 )
 
-// Tool configuration defaults.
 const (
 	TempFileChunkSizeDefault = 1000
 	TempFileChunkSizeMin     = 500
@@ -23,6 +22,95 @@ const (
 	TempFileRateWindow       = time.Minute
 	WebSearchHTTPTimeout     = 10 * time.Second
 )
+
+type tempFileContextKey struct{}
+type toolSessionContextKey struct{}
+
+type toolRateLimiter struct {
+	limit  int
+	window time.Duration
+	mu     sync.Mutex
+	hits   map[string][]time.Time
+}
+
+func newToolRateLimiter(limit int, window time.Duration) *toolRateLimiter {
+	return &toolRateLimiter{limit: limit, window: window, hits: make(map[string][]time.Time)}
+}
+
+func (l *toolRateLimiter) Allow(key string) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	queue := l.hits[key]
+	cutoff := now.Add(-l.window)
+	idx := 0
+	for _, t := range queue {
+		if t.After(cutoff) {
+			break
+		}
+		idx++
+	}
+	if idx > 0 {
+		queue = queue[idx:]
+	}
+	if len(queue) >= l.limit {
+		l.hits[key] = queue
+		return false
+	}
+	queue = append(queue, now)
+	l.hits[key] = queue
+	return true
+}
+
+func WithTempFiles(ctx context.Context, files []*models.TempFile) context.Context {
+	if len(files) == 0 {
+		return ctx
+	}
+	copied := make([]*models.TempFile, 0, len(files))
+	for _, f := range files {
+		if f == nil {
+			continue
+		}
+		c := *f
+		copied = append(copied, &c)
+	}
+	return context.WithValue(ctx, tempFileContextKey{}, copied)
+}
+
+func TempFilesFromContext(ctx context.Context) []*models.TempFile {
+	val := ctx.Value(tempFileContextKey{})
+	if val == nil {
+		return nil
+	}
+	files, _ := val.([]*models.TempFile)
+	return files
+}
+
+func WithToolSession(ctx context.Context, userID, sessionID int64) context.Context {
+	if userID <= 0 || sessionID <= 0 {
+		return ctx
+	}
+	meta := struct {
+		UserID    int64
+		SessionID int64
+	}{userID, sessionID}
+	return context.WithValue(ctx, toolSessionContextKey{}, meta)
+}
+
+func ToolSessionFromContext(ctx context.Context) (int64, int64, bool) {
+	val := ctx.Value(toolSessionContextKey{})
+	if val == nil {
+		return 0, 0, false
+	}
+	meta, ok := val.(struct {
+		UserID    int64
+		SessionID int64
+	})
+	if !ok {
+		return 0, 0, false
+	}
+	return meta.UserID, meta.SessionID, true
+}
 
 func (w *webSearchTool) fetchURL(ctx context.Context, target string) (string, error) {
 	if w.httpClient == nil {
@@ -65,97 +153,4 @@ func (w *webSearchTool) fetchURL(ctx context.Context, target string) (string, er
 func looksLikeURL(input string) bool {
 	lower := strings.ToLower(input)
 	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
-}
-
-type tempFileContextKey struct{}
-type toolSessionContextKey struct{}
-
-type toolRateLimiter struct {
-	limit  int
-	window time.Duration
-	mu     sync.Mutex
-	hits   map[string][]time.Time
-}
-
-func newToolRateLimiter(limit int, window time.Duration) *toolRateLimiter {
-	return &toolRateLimiter{limit: limit, window: window, hits: make(map[string][]time.Time)}
-}
-
-func (l *toolRateLimiter) Allow(key string) bool {
-	now := time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	queue := l.hits[key]
-	cutoff := now.Add(-l.window)
-	idx := 0
-	for _, t := range queue {
-		if t.After(cutoff) {
-			break
-		}
-		idx++
-	}
-	if idx > 0 {
-		queue = queue[idx:]
-	}
-	if len(queue) >= l.limit {
-		l.hits[key] = queue
-		return false
-	}
-	queue = append(queue, now)
-	l.hits[key] = queue
-	return true
-}
-
-// WithTempFiles stores the session's temporary files in context for downstream tools.
-func WithTempFiles(ctx context.Context, files []*models.TempFile) context.Context {
-	if len(files) == 0 {
-		return ctx
-	}
-	copied := make([]*models.TempFile, 0, len(files))
-	for _, f := range files {
-		if f == nil {
-			continue
-		}
-		c := *f
-		copied = append(copied, &c)
-	}
-	return context.WithValue(ctx, tempFileContextKey{}, copied)
-}
-
-// TempFilesFromContext retrieves the temp file metadata attached to the context.
-func TempFilesFromContext(ctx context.Context) []*models.TempFile {
-	val := ctx.Value(tempFileContextKey{})
-	if val == nil {
-		return nil
-	}
-	files, _ := val.([]*models.TempFile)
-	return files
-}
-
-// WithToolSession stores the user/session identifiers for tool rate limiting.
-func WithToolSession(ctx context.Context, userID, sessionID int64) context.Context {
-	if userID <= 0 || sessionID <= 0 {
-		return ctx
-	}
-	meta := struct {
-		UserID    int64
-		SessionID int64
-	}{userID, sessionID}
-	return context.WithValue(ctx, toolSessionContextKey{}, meta)
-}
-
-// ToolSessionFromContext retrieves the user/session identifiers if set.
-func ToolSessionFromContext(ctx context.Context) (int64, int64, bool) {
-	val := ctx.Value(toolSessionContextKey{})
-	if val == nil {
-		return 0, 0, false
-	}
-	meta, ok := val.(struct {
-		UserID    int64
-		SessionID int64
-	})
-	if !ok {
-		return 0, 0, false
-	}
-	return meta.UserID, meta.SessionID, true
 }

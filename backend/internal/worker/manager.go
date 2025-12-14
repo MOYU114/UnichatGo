@@ -243,6 +243,14 @@ func (m *Manager) Purge(userID, sessionID int64) {
 	state.purgeCache(sessionID)
 }
 
+func (m *Manager) InvalidateTempFiles(userID, sessionID int64) {
+	state := m.getState(userID)
+	if state == nil {
+		return
+	}
+	state.clearFiles(sessionID)
+}
+
 // ResetUser Reset all cache of userX
 func (m *Manager) ResetUser(userID int64) {
 	m.mu.Lock()
@@ -315,18 +323,28 @@ func (m *Manager) handleStream(task streamTask) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	files, err := m.asst.ListSessionTempFiles(ctx, req.UserID, req.SessionID)
-	if err != nil {
-		if task.resultCh != nil {
-			task.resultCh <- workerReturn{err: err}
+	forcedAttachments := len(req.Files) > 0
+	attachments := req.Files
+	if forcedAttachments {
+		state.setFiles(req.SessionID, attachments)
+	} else {
+		attachments = state.getFiles(req.SessionID)
+		if attachments == nil {
+			var err error
+			attachments, err = m.asst.ListSessionTempFiles(ctx, req.UserID, req.SessionID)
+			if err != nil {
+				if task.resultCh != nil {
+					task.resultCh <- workerReturn{err: err}
+				}
+				return
+			}
+			state.setFiles(req.SessionID, attachments)
 		}
-		return
 	}
-	state.setFiles(req.SessionID, files)
-	req.Files = files
-	if len(files) > 0 {
-		ctx = ai.WithTempFiles(ctx, files)
-	}
+	req.Files = attachments
+	textFiles := filterTextFiles(attachments)
+	imageFiles := filterImageFiles(attachments)
+	ctx = ai.WithTempFiles(ctx, textFiles)
 	ctx = ai.WithToolSession(ctx, req.UserID, req.SessionID)
 	res, err := m.ensureResources(state, req.SessionRequest)
 	if err != nil {
@@ -370,7 +388,7 @@ func (m *Manager) handleStream(task streamTask) {
 		}
 	}
 
-	if len(req.Files) > 0 {
+	if len(textFiles) > 0 {
 		if res.as == nil {
 			if task.resultCh != nil {
 				task.resultCh <- workerReturn{err: errors.New("summarizer unavailable")}
@@ -384,10 +402,20 @@ func (m *Manager) handleStream(task streamTask) {
 			return
 		}
 		state.setHistory(req.SessionID, history)
-		state.setFiles(req.SessionID, req.Files)
 	}
 
+	chatHistory := append([]*models.Message{}, history...)
+	if instructions := buildAttachmentInstruction(textFiles, imageFiles, forcedAttachments); instructions != "" {
+		chatHistory = append(chatHistory, &models.Message{
+			UserID:    req.UserID,
+			SessionID: req.SessionID,
+			Role:      models.RoleSystem,
+			Content:   instructions,
+			CreatedAt: time.Now(),
+		})
+	}
 	if req.Message != nil {
+		chatHistory = append(chatHistory, req.Message)
 		history = append(history, req.Message)
 		state.setHistory(req.SessionID, history)
 	}
@@ -402,7 +430,7 @@ func (m *Manager) handleStream(task streamTask) {
 		}
 		return
 	}
-	aiMsg, err := res.ai.StreamChat(ctx, req.Message, history, cb)
+	aiMsg, err := res.ai.StreamChat(ctx, req.Message, chatHistory, imageFiles, cb)
 	if err != nil {
 		if task.resultCh != nil {
 			task.resultCh <- workerReturn{err: err}
@@ -422,6 +450,63 @@ func hasUserMessage(history []*models.Message) bool {
 		}
 	}
 	return false
+}
+
+func isImageFile(mime string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(mime)), "image/")
+}
+
+func filterImageFiles(files []*models.TempFile) []*models.TempFile {
+	var list []*models.TempFile
+	for _, f := range files {
+		if f == nil {
+			continue
+		}
+		if isImageFile(f.MimeType) {
+			list = append(list, f)
+		}
+	}
+	return list
+}
+
+func filterTextFiles(files []*models.TempFile) []*models.TempFile {
+	var list []*models.TempFile
+	for _, f := range files {
+		if f == nil || isImageFile(f.MimeType) {
+			continue
+		}
+		list = append(list, f)
+	}
+	return list
+}
+
+func buildAttachmentInstruction(textFiles, imageFiles []*models.TempFile, force bool) string {
+	if len(textFiles) == 0 && len(imageFiles) == 0 {
+		return ""
+	}
+	var textList []string
+	for _, f := range textFiles {
+		if f == nil {
+			continue
+		}
+		textList = append(textList, fmt.Sprintf("- file_id=%d, name=%s, mime=%s, size=%d bytes",
+			f.ID, f.FileName, f.MimeType, f.Size))
+	}
+	var b strings.Builder
+	if len(textList) > 0 {
+		if force {
+			b.WriteString("New text documents attached. You MUST call `temp_file_reader` for each listed file_id before answering; do not guess about their contents.\n")
+		} else {
+			b.WriteString("Stored text documents available in this session. Call `temp_file_reader` on these file_id values when you need to reference them:\n")
+		}
+		for _, line := range textList {
+			b.WriteString(line + "\n")
+		}
+	}
+	if len(imageFiles) > 0 {
+		b.WriteString("Image attachments are included inline in this message; inspect them when the user asks about screenshots or pictures.\n")
+	}
+	return b.String()
 }
 
 func (m *Manager) ensureResources(state *userState, req SessionRequest) (*sessionResources, error) {
@@ -457,6 +542,9 @@ func (m *Manager) ensureResources(state *userState, req SessionRequest) (*sessio
 func (m *Manager) attachFileSummaries(ctx context.Context, state *userState, req StreamRequest, res *sessionResources, history *[]*models.Message) error {
 	for _, tempFile := range req.Files {
 		if tempFile == nil || tempFile.StoredPath == "" {
+			continue
+		}
+		if isImageFile(tempFile.MimeType) {
 			continue
 		}
 		if tempFile.Summary != "" {
