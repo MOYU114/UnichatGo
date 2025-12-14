@@ -412,14 +412,17 @@ func TestManagerHighLoadAllowsOtherUsers(t *testing.T) {
 // --- helpers ---
 
 type mockAssistant struct {
-	mu       sync.Mutex
-	nextID   int64
-	sessions map[int64]*models.Session
+	mu          sync.Mutex
+	nextID      int64
+	nextMsgID   int64
+	sessions    map[int64]*models.Session
+	sessionMsgs map[int64][]*models.Message
 }
 
 func newMockAssistant() *mockAssistant {
 	return &mockAssistant{
-		sessions: make(map[int64]*models.Session),
+		sessions:    make(map[int64]*models.Session),
+		sessionMsgs: make(map[int64][]*models.Message),
 	}
 }
 
@@ -447,6 +450,24 @@ func (m *mockAssistant) UpdateSessionTitle(ctx context.Context, userID, sessionI
 	return nil
 }
 
+func (m *mockAssistant) ListSessionTempFiles(ctx context.Context, userID, sessionID int64) ([]*models.TempFile, error) {
+	return nil, nil
+}
+
+func (m *mockAssistant) AddMessage(ctx context.Context, msg models.Message) (*models.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextMsgID++
+	msg.ID = m.nextMsgID
+	copyMsg := msg
+	m.sessionMsgs[msg.SessionID] = append(m.sessionMsgs[msg.SessionID], &copyMsg)
+	return &copyMsg, nil
+}
+
+func (m *mockAssistant) UpdateTempFileSummary(ctx context.Context, fileID int64, summary string, messageID int64) error {
+	return nil
+}
+
 type fakeAI struct{}
 
 func (f *fakeAI) StreamChat(ctx context.Context, message *models.Message, prevHistory []*models.Message, callback func(string) error) (*models.Message, error) {
@@ -460,6 +481,10 @@ type fakeAS struct{}
 
 func (f *fakeAS) GenerateTitle(ctx context.Context, messages []*models.Message) (string, error) {
 	return "fake-title", nil
+}
+
+func (f *fakeAS) SummarizeFile(ctx context.Context, content []*models.Message) (string, error) {
+	return "fake-summary", nil
 }
 
 type fakeBlockingAI struct {

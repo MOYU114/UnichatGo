@@ -6,6 +6,7 @@ toolchain go1.24.2
 
 require (
 	github.com/cloudwego/eino v0.7.0
+	github.com/cloudwego/eino-ext/components/document/loader/file v0.0.0-20251212100737-81e5663e756e
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.10
 	github.com/cloudwego/eino-ext/components/model/gemini v0.1.15
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.5

@@ -5,19 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino-ext/components/document/loader/file"
 	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino-ext/components/tool/googlesearch"
+	"github.com/cloudwego/eino/components/document"
+	"github.com/cloudwego/eino/components/document/parser"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
+
+	"unichatgo/internal/models"
 )
 
 func InitToolsChain() []tool.BaseTool {
@@ -25,6 +28,9 @@ func InitToolsChain() []tool.BaseTool {
 
 	if ws := InitWebSearch(); ws != nil {
 		tools = append(tools, ws)
+	}
+	if fr := initTempFileReader(); fr != nil {
+		tools = append(tools, fr)
 	}
 	return tools
 }
@@ -40,7 +46,7 @@ func InitWebSearch() tool.InvokableTool {
 	ws := &webSearchTool{
 		google:     googleTool,
 		duck:       duckTool,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{Timeout: WebSearchHTTPTimeout},
 	}
 
 	info := &schema.ToolInfo{
@@ -112,47 +118,132 @@ func (w *webSearchTool) run(ctx context.Context, params *webSearchParams) (strin
 	return "", errors.New("no search provider succeeded")
 }
 
-func (w *webSearchTool) fetchURL(ctx context.Context, target string) (string, error) {
-	if w.httpClient == nil {
-		w.httpClient = &http.Client{Timeout: 10 * time.Second}
-	}
-
-	parsed, err := url.Parse(target)
-	if err != nil {
-		return "", fmt.Errorf("invalid url: %w", err)
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", errors.New("unsupported url scheme")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "UnichatGo-WebSearch/1.0")
-
-	resp, err := w.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch url: %s", resp.Status)
-	}
-
-	const maxBodySize = 512 * 1024
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
-	if err != nil {
-		return "", err
-	}
-
-	return string(body), nil
+// temp file reader tool
+type tempFileReader struct {
+	loader *file.FileLoader
 }
 
-func looksLikeURL(input string) bool {
-	lower := strings.ToLower(input)
-	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+var tempFileReaderLimiter = newToolRateLimiter(TempFileRateLimit, TempFileRateWindow)
+
+type tempFileReaderParams struct {
+	FileID     int64 `json:"file_id"`
+	ChunkIndex int   `json:"chunk_index,omitempty"`
+	ChunkSize  int   `json:"chunk_size,omitempty"`
+}
+
+func initTempFileReader() tool.InvokableTool {
+	parserExt, err := parser.NewExtParser(context.Background(), &parser.ExtParserConfig{
+		FallbackParser: parser.TextParser{},
+	})
+	if err != nil {
+		log.Printf("temp file reader disabled: %v", err)
+		return nil
+	}
+	loader, err := file.NewFileLoader(context.Background(), &file.FileLoaderConfig{
+		UseNameAsID: true,
+		Parser:      parserExt,
+	})
+	if err != nil {
+		log.Printf("temp file reader disabled: %v", err)
+		return nil
+	}
+	reader := &tempFileReader{
+		loader: loader,
+	}
+	info := &schema.ToolInfo{
+		Name: "temp_file_reader",
+		Desc: "Read user-uploaded documents in small chunks. Provide the file_id (and optional chunk_index / chunk_size) to fetch a specific segment; limit 3 calls per minute per session.",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"file_id": {
+				Desc:     "ID of the file to read, provided in the system instructions.",
+				Type:     schema.Integer,
+				Required: true,
+			},
+			"chunk_index": {
+				Desc:     "Zero-based chunk index to read, default 0.",
+				Type:     schema.Integer,
+				Required: false,
+			},
+			"chunk_size": {
+				Desc:     "Number of characters per chunk (max 4000, default 2000).",
+				Type:     schema.Integer,
+				Required: false,
+			},
+		}),
+	}
+	return utils.NewTool(info, reader.run)
+}
+
+func (t *tempFileReader) run(ctx context.Context, params *tempFileReaderParams) (string, error) {
+	if params == nil || params.FileID <= 0 {
+		return "", errors.New("file_id is required")
+	}
+	files := TempFilesFromContext(ctx)
+	if len(files) == 0 {
+		return "", errors.New("no temp files available for this session")
+	}
+	var target *models.TempFile
+	for _, f := range files {
+		if f != nil && f.ID == params.FileID {
+			target = f
+			break
+		}
+	}
+	if target == nil {
+		return "", errors.New("file not found in current session")
+	}
+	userID, sessionID, ok := ToolSessionFromContext(ctx)
+	key := fmt.Sprintf("file:%d", params.FileID)
+	if ok {
+		key = fmt.Sprintf("user:%d:session:%d", userID, sessionID)
+	}
+	if !tempFileReaderLimiter.Allow(key) {
+		return "", errors.New("temp file reader rate limit exceeded, please retry in a minute")
+	}
+
+	docs, err := t.loader.Load(ctx, document.Source{URI: target.StoredPath})
+	if err != nil {
+		return "", fmt.Errorf("load file: %w", err)
+	}
+	var builder strings.Builder
+	for _, doc := range docs {
+		content := strings.TrimSpace(doc.Content)
+		if content == "" {
+			continue
+		}
+		builder.WriteString(content)
+		builder.WriteString("\n\n")
+	}
+	text := strings.TrimSpace(builder.String())
+	if text == "" {
+		return "", errors.New("file has no readable text content")
+	}
+	chunkSize := params.ChunkSize
+	if chunkSize <= 0 || chunkSize > TempFileChunkSizeMax {
+		chunkSize = TempFileChunkSizeDefault
+	}
+	if chunkSize < TempFileChunkSizeMin {
+		chunkSize = TempFileChunkSizeMin
+	}
+	chunkIndex := params.ChunkIndex
+	if chunkIndex < 0 {
+		chunkIndex = 0
+	}
+	runes := []rune(text)
+	totalChunks := (len(runes) + chunkSize - 1) / chunkSize
+	if totalChunks == 0 {
+		return fmt.Sprintf("File: %s has no readable text content.", target.FileName), nil
+	}
+	if chunkIndex >= totalChunks {
+		return "", fmt.Errorf("chunk_index %d out of range, total chunks %d", chunkIndex, totalChunks)
+	}
+	start := chunkIndex * chunkSize
+	end := start + chunkSize
+	if end > len(runes) {
+		end = len(runes)
+	}
+	segment := string(runes[start:end])
+	return fmt.Sprintf("File: %s\nChunk %d/%d\n\n%s", target.FileName, chunkIndex+1, totalChunks, segment), nil
 }
 
 // InitDDGsearch Init DDG Search

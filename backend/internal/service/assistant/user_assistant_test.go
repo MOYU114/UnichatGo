@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"unichatgo/internal/config"
+	"unichatgo/internal/models"
 	"unichatgo/internal/storage"
 )
 
@@ -105,6 +106,56 @@ func TestListAndDeleteUserTokens(t *testing.T) {
 
 	if err := svc.DeleteUserToken(ctx, userID, "missing"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+func TestTempFileLookupAndSummaryUpdate(t *testing.T) {
+	t.Setenv(apiTokenKeyEnv, strings.Repeat("d", 32))
+	db := openTestDB(t)
+	defer db.Close()
+
+	svc, err := NewService(db)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	userID := insertTestUser(t, db, "dave")
+	session, err := svc.CreateSession(context.Background(), userID, "temp")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	fileID, err := svc.RecordTempFile(context.Background(), userID, session.ID, "doc.txt", "/tmp/doc.txt", "text/plain", 10, time.Hour)
+	if err != nil {
+		t.Fatalf("record temp file: %v", err)
+	}
+
+	files, err := svc.GetTempFilesByIDs(context.Background(), userID, session.ID, []int64{fileID})
+	if err != nil {
+		t.Fatalf("GetTempFilesByIDs: %v", err)
+	}
+	if len(files) != 1 || files[0].FileName != "doc.txt" {
+		t.Fatalf("unexpected files: %+v", files)
+	}
+
+	msg, err := svc.AddMessage(context.Background(), models.Message{
+		UserID:    userID,
+		SessionID: session.ID,
+		Role:      models.RoleSystem,
+		Content:   "stub",
+	})
+	if err != nil {
+		t.Fatalf("add message: %v", err)
+	}
+
+	if err := svc.UpdateTempFileSummary(context.Background(), fileID, "summary text", msg.ID); err != nil {
+		t.Fatalf("UpdateTempFileSummary: %v", err)
+	}
+	var summary string
+	var msgID int64
+	if err := db.QueryRow(`SELECT summary, summary_message_id FROM temp_files WHERE id = ?`, fileID).Scan(&summary, &msgID); err != nil {
+		t.Fatalf("scan temp file: %v", err)
+	}
+	if summary != "summary text" || msgID != msg.ID {
+		t.Fatalf("unexpected summary or msg id: %q, %d", summary, msgID)
 	}
 }
 

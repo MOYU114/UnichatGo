@@ -41,7 +41,10 @@ Sample minimal config (`config.json`):
     "min_workers": 3,
     "max_workers": 10,
     "queue_size" : 100,
-    "worker_idle_timeout": 30
+    "worker_idle_timeout_minutes": 30,
+    "file_base_dir": "./data/uploads",
+    "temp_file_ttl_minutes": 1440,
+    "temp_file_clean_interval_minutes": 60
   },
   "providers": {
     "openai": {

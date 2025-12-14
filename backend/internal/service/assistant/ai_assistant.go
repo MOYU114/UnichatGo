@@ -122,3 +122,38 @@ func (as *assistantService) GenerateTitle(ctx context.Context, messages []*model
 	}
 	return title, nil
 }
+
+func (as *assistantService) SummarizeFile(ctx context.Context, content []*models.Message) (string, error) {
+	if content == nil || len(content) == 0 {
+		return "", nil
+	}
+
+	systemPrompt := "You are a helpful assistant that summarizes user provided documents. " +
+		"Produce a concise summary highlighting the key points and important details. " +
+		"Limit the summary to 6 sentences."
+
+	conversationText := ""
+	for _, cnt := range content {
+		if cnt.Role == models.RoleUser {
+			conversationText += fmt.Sprintf("User: %s\n", cnt.Content)
+		} else if cnt.Role == models.RoleAssistant {
+			conversationText += fmt.Sprintf("Assistant: %s\n", cnt.Content)
+		}
+	}
+	userPrompt := fmt.Sprintf("Document Content:\n%s\n", conversationText)
+	schemaMessages := []*schema.Message{
+		{
+			Role:    schema.System,
+			Content: systemPrompt,
+		},
+		{
+			Role:    schema.User,
+			Content: userPrompt,
+		},
+	}
+	resp, err := as.chatModel.Generate(ctx, schemaMessages)
+	if err != nil {
+		return "", fmt.Errorf("summarize file failed: %w", err)
+	}
+	return resp.Content, nil
+}

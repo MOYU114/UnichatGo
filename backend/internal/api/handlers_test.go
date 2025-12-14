@@ -6,8 +6,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -472,6 +476,61 @@ func TestGetSessionMessages(t *testing.T) {
 	}
 }
 
+func TestFilesUploadSuccess(t *testing.T) {
+	router, db, handler := newTestServer(t)
+	defer db.Close()
+	client := newAPITestClient(t, router)
+
+	userID, _ := registerAndLogin(t, client)
+	session, err := handler.assistant.CreateSession(context.Background(), userID, "files")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	path := fmt.Sprintf("/api/users/%d/uploads", userID)
+	resp := client.UploadFile(path, session.ID, "notes.txt", []byte("hello world"))
+	assertStatus(t, resp, http.StatusCreated)
+
+	var body struct {
+		FileID   int64  `json:"file_id"`
+		FileName string `json:"file_name"`
+		Size     int64  `json:"size"`
+	}
+	decodeJSON(t, resp.Body.Bytes(), &body)
+	if body.FileID <= 0 || body.FileName == "" || body.Size == 0 {
+		t.Fatalf("invalid upload response: %+v", body)
+	}
+
+	expectedPath := filepath.Join(handler.fileBase, strconv.FormatInt(userID, 10), strconv.FormatInt(session.ID, 10), body.FileName)
+	if _, err := os.Stat(expectedPath); err != nil {
+		t.Fatalf("expected file at %s: %v", expectedPath, err)
+	}
+}
+
+func TestFilesUploadRejectsInvalidInput(t *testing.T) {
+	router, db, handler := newTestServer(t)
+	defer db.Close()
+	client := newAPITestClient(t, router)
+
+	userID, _ := registerAndLogin(t, client)
+	session, err := handler.assistant.CreateSession(context.Background(), userID, "files")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	path := fmt.Sprintf("/api/users/%d/uploads", userID)
+	resp := client.UploadFile(path, session.ID, "data.bin", []byte{0x00, 0x01, 0x02, 0x03})
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unsupported file type, got %d", resp.Code)
+	}
+
+	big := bytes.Repeat([]byte("a"), maxUploadBytes+1)
+	resp = client.UploadFile(path, session.ID, "big.txt", big)
+	if resp.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for large file, got %d", resp.Code)
+	}
+}
+
 type sseEvent struct {
 	Name string
 	Data string
@@ -531,7 +590,7 @@ func newTestServer(t *testing.T) (*gin.Engine, *sql.DB, *Handler) {
 		t.Fatalf("assistant service: %v", err)
 	}
 	authSvc := auth.NewService(db, time.Hour)
-	handler := NewHandler(asst, authSvc, worker.DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10})
+	handler := NewHandler(asst, authSvc, worker.DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10}, t.TempDir(), assistant.DefaultTempFileTTL)
 	handler.workers = newMockWorker(asst)
 
 	router := gin.New()
@@ -668,6 +727,41 @@ func (c *apiTestClient) DoJSONNoCSRF(method, path string, body interface{}, head
 
 func (c *apiTestClient) PostSSE(path string, body interface{}, headers map[string]string) *httptest.ResponseRecorder {
 	return c.doRequest(http.MethodPost, path, body, headers, requestConfig{})
+}
+
+func (c *apiTestClient) UploadFile(path string, sessionID int64, filename string, content []byte) *httptest.ResponseRecorder {
+	c.t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("session_id", strconv.FormatInt(sessionID, 10)); err != nil {
+		c.t.Fatalf("write session field: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		c.t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		c.t.Fatalf("write file content: %v", err)
+	}
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, path, &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	for _, ck := range c.cookies {
+		req.AddCookie(ck)
+	}
+	if needsCSRFAttach(http.MethodPost) && req.Header.Get("X-CSRF-Token") == "" {
+		if ck, ok := c.cookies["csrf_token"]; ok {
+			req.Header.Set("X-CSRF-Token", ck.Value)
+		}
+	}
+	rec := httptest.NewRecorder()
+	c.router.ServeHTTP(rec, req)
+	if resp := rec.Result(); resp != nil {
+		c.captureCookies(resp)
+		resp.Body.Close()
+	}
+	return rec
 }
 
 func (c *apiTestClient) doRequest(method, path string, body interface{}, headers map[string]string, cfg requestConfig) *httptest.ResponseRecorder {

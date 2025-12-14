@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"time"
@@ -45,10 +46,25 @@ func main() {
 		MinWorkers:        cfg.BasicConfig.MinWorkers,
 		MaxWorkers:        cfg.BasicConfig.MaxWorkers,
 		QueueSize:         cfg.BasicConfig.QueueSize,
-		WorkerIdleTimeout: cfg.BasicConfig.WorkerIdleTimeout * time.Second,
+		WorkerIdleTimeout: time.Duration(cfg.BasicConfig.WorkerIdleTimeout) * time.Minute,
 	}
+	cleanCtx, cleanCancel := context.WithCancel(context.Background())
+	defer cleanCancel()
+	cleanInterval := time.Duration(cfg.BasicConfig.TempCleanInterval) * time.Minute
+	if cleanInterval <= 0 {
+		cleanInterval = assistant.DefaultTempFileCleanupInterval
+	}
+	assistantService.StartTempFileCleaner(cleanCtx, cleanInterval)
 	authService := auth.NewService(db, 24*time.Hour)
-	handlers := api.NewHandler(assistantService, authService, workerCfg)
+	fileBase := cfg.BasicConfig.FileBaseDir
+	if fileBase == "" {
+		fileBase = "./data/uploads"
+	}
+	tempTTL := time.Duration(cfg.BasicConfig.TempFileTTL) * time.Minute
+	if tempTTL <= 0 {
+		tempTTL = assistant.DefaultTempFileTTL
+	}
+	handlers := api.NewHandler(assistantService, authService, workerCfg, fileBase, tempTTL)
 
 	router := gin.Default()
 	handlers.RegisterRoutes(router)

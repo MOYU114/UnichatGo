@@ -109,6 +109,25 @@ func Migrate(db *sql.DB, driver string) error {
 			`CREATE INDEX IF NOT EXISTS idx_user_tokens_user ON user_tokens(user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`,
+			`CREATE TABLE IF NOT EXISTS temp_files (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				session_id INTEGER NOT NULL,
+				file_name TEXT NOT NULL,
+				stored_path TEXT NOT NULL,
+				mime_type TEXT NOT NULL,
+				size INTEGER NOT NULL,
+				status TEXT NOT NULL DEFAULT 'active',
+				summary TEXT,
+				summary_message_id INTEGER,
+				created_at DATETIME NOT NULL,
+				expires_at DATETIME NOT NULL,
+				FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+				FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+				FOREIGN KEY(summary_message_id) REFERENCES messages(id) ON DELETE SET NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_temp_files_user ON temp_files(user_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_temp_files_expiry ON temp_files(expires_at)`,
 		}
 	case "mysql":
 		stmts = []string{
@@ -160,6 +179,26 @@ func Migrate(db *sql.DB, driver string) error {
 				expires_at DATETIME NOT NULL,
 				INDEX idx_user_tokens_user (user_id),
 				CONSTRAINT fk_user_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+			`CREATE TABLE IF NOT EXISTS temp_files (
+				id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+				user_id BIGINT UNSIGNED NOT NULL,
+				session_id BIGINT UNSIGNED NOT NULL,
+				file_name VARCHAR(255) NOT NULL,
+				stored_path TEXT NOT NULL,
+				mime_type VARCHAR(255) NOT NULL,
+				size BIGINT NOT NULL,
+				status VARCHAR(50) NOT NULL DEFAULT 'active',
+				summary MEDIUMTEXT,
+				summary_message_id BIGINT UNSIGNED,
+				created_at DATETIME NOT NULL,
+				expires_at DATETIME NOT NULL,
+				PRIMARY KEY (id),
+				INDEX idx_temp_files_user (user_id),
+				INDEX idx_temp_files_expiry (expires_at),
+				CONSTRAINT fk_temp_files_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+				CONSTRAINT fk_temp_files_session FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+				CONSTRAINT fk_temp_files_summary_msg FOREIGN KEY (summary_message_id) REFERENCES messages(id) ON DELETE SET NULL
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		}
 	default:

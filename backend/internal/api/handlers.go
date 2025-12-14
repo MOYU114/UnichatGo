@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,14 +33,18 @@ type Handler struct {
 	assistant *assistant.Service
 	auth      *auth.Service
 	workers   WorkerManager
+	fileBase  string
+	fileTTL   time.Duration
 }
 
 // NewHandler constructs a Handler instance.
-func NewHandler(service *assistant.Service, authService *auth.Service, cfg worker.DispatcherConfig) *Handler {
+func NewHandler(service *assistant.Service, authService *auth.Service, cfg worker.DispatcherConfig, fileBase string, fileTTL time.Duration) *Handler {
 	return &Handler{
 		assistant: service,
 		auth:      authService,
 		workers:   worker.NewManager(service, cfg),
+		fileBase:  fileBase,
+		fileTTL:   fileTTL,
 	}
 }
 
@@ -87,6 +93,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	userRoutes.DELETE("/conversation/sessions/:session_id", h.deleteSession)
 	userRoutes.GET("/conversation/sessions/:session_id/messages", h.getSessionMessages)
 	userRoutes.POST("/conversation/msg", h.captureInput)
+	userRoutes.POST("/uploads", h.filesUpload)
 	userRoutes.POST("/logout", h.logoutUser)
 	userRoutes.DELETE("", h.deleteUser)
 }
@@ -553,4 +560,121 @@ func setCookie(c *gin.Context, ck *http.Cookie) {
 		return
 	}
 	http.SetCookie(c.Writer, ck)
+}
+
+const (
+	maxUploadBytes   = 10 << 20 // 10 MB
+	userStorageLimit = 50 << 20 // 50 MB per user
+)
+
+var allowedContentTypes = []string{
+	"text/plain",
+	"text/markdown",
+	"application/pdf",
+	"application/json",
+	"application/msword",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+func isAllowedContentType(ct string) bool {
+	for _, allowed := range allowedContentTypes {
+		if strings.HasPrefix(ct, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) filesUpload(c *gin.Context) {
+	userID, ok := h.authorizedUserID(c)
+	if !ok {
+		return
+	}
+	if err := c.Request.ParseMultipartForm(maxUploadBytes); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form"})
+		return
+	}
+	sessionVal := c.PostForm("session_id")
+	sessionID, err := strconv.ParseInt(sessionVal, 10, 64)
+	if err != nil || sessionID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_id"})
+		return
+	}
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		return
+	}
+	if file.Size > maxUploadBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large"})
+		return
+	}
+	usage, err := h.assistant.TempStorageUsage(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "calculate usage failed"})
+		return
+	}
+	if usage+file.Size > userStorageLimit {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "storage quota exceeded"})
+		return
+	}
+	f, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "open file failed"})
+		return
+	}
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	_ = f.Close()
+	contentType := http.DetectContentType(buf[:n])
+	if !isAllowedContentType(contentType) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file type"})
+		return
+	}
+	filename := filepath.Base(file.Filename)
+	destDir, destPath, finalName := h.getUniqueFilePath(userID, sessionID, filename)
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "create directory failed"})
+		return
+	}
+	if err := c.SaveUploadedFile(file, destPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "save file failed"})
+		return
+	}
+	fileID, err := h.assistant.RecordTempFile(c.Request.Context(), userID, sessionID, finalName, destPath, contentType, file.Size, h.fileTTL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "record file failed"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{
+		"file_id":   fileID,
+		"file_name": finalName,
+		"size":      file.Size,
+		"mime":      contentType,
+		"used":      usage + file.Size,
+		"limit":     userStorageLimit,
+	})
+}
+
+func (h *Handler) getFilePath(userID, sessionID int64, filename string) (string, string) {
+	destDir := filepath.Join(h.fileBase, strconv.FormatInt(userID, 10), strconv.FormatInt(sessionID, 10))
+	destPath := filepath.Join(destDir, filename)
+	return destDir, destPath
+}
+
+func (h *Handler) getUniqueFilePath(userID, sessionID int64, filename string) (string, string, string) {
+	destDir, destPath := h.getFilePath(userID, sessionID, filename)
+	if _, err := os.Stat(destPath); os.IsNotExist(err) {
+		return destDir, destPath, filename
+	}
+	ext := filepath.Ext(filename)
+	base := strings.TrimSuffix(filename, ext)
+	for idx := 1; idx <= 1000; idx++ {
+		candidate := fmt.Sprintf("%s (%d)%s", base, idx, ext)
+		dir, path := h.getFilePath(userID, sessionID, candidate)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return dir, path, candidate
+		}
+	}
+	return destDir, filepath.Join(destDir, fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext)), fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext)
 }

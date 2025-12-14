@@ -7,6 +7,7 @@ import {
   deleteSession as deleteSessionApi,
   streamConversation,
   fetchSessionMessages,
+  uploadSessionFile,
 } from '../api/sessions'
 import { saveProviderToken, deleteProviderToken, listProviderTokens } from '../api/tokens'
 import { useAuthStore } from './auth'
@@ -38,6 +39,8 @@ export const useSessionStore = defineStore('session', () => {
   const tokenDialogVisible = ref(false)
   const providerTokens = ref([])
   const tokensLoaded = ref(false)
+  const attachmentsBySession = ref({})
+  const uploading = ref(false)
   const hasToken = computed(() => {
     if (!tokensLoaded.value) return true
     return providerTokens.value.some((item) => item.provider === provider.value)
@@ -54,6 +57,8 @@ export const useSessionStore = defineStore('session', () => {
     return session?.title || 'New Conversation'
   })
 
+  const currentAttachments = computed(() => attachmentsBySession.value[currentSessionId.value] || [])
+
   function ensureMessageList(sessionId) {
     if (!messagesBySession.value[sessionId]) {
       messagesBySession.value = {
@@ -62,6 +67,13 @@ export const useSessionStore = defineStore('session', () => {
       }
     }
     return messagesBySession.value[sessionId]
+  }
+
+  function setAttachments(sessionId, files) {
+    attachmentsBySession.value = {
+      ...attachmentsBySession.value,
+      [sessionId]: files,
+    }
   }
 
   function upsertSession(data) {
@@ -144,6 +156,8 @@ export const useSessionStore = defineStore('session', () => {
     await deleteSessionApi(authStore.user.id, sessionId)
     sessions.value = sessions.value.filter((item) => item.id !== sessionId)
     delete messagesBySession.value[sessionId]
+    const { [sessionId]: _removed, ...rest } = attachmentsBySession.value
+    attachmentsBySession.value = rest
     const remaining = sessions.value[0]?.id || null
     currentSessionId.value = remaining
     if (remaining) {
@@ -222,8 +236,10 @@ export const useSessionStore = defineStore('session', () => {
                 updatedAt: payload.ai_message.created_at,
               })
             }
+            setAttachments(sessionId, [])
           },
           onError: (payload) => {
+            setAttachments(sessionId, [])
             if (typeof payload?.message === 'string' && payload.message.includes('api token not configured')) {
               markTokenMissing(provider.value)
               tokenDialogVisible.value = true
@@ -236,7 +252,54 @@ export const useSessionStore = defineStore('session', () => {
       )
     } finally {
       sending.value = false
+      setAttachments(sessionId, [])
     }
+  }
+
+  async function uploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean)
+    if (!files.length) {
+      return
+    }
+    const authStore = useAuthStore()
+    if (!authStore.user) throw new Error('Authentication required')
+    uploading.value = true
+    try {
+      let sessionId = currentSessionId.value
+      if (!sessionId) {
+        sessionId = await createSession()
+      }
+      ensureMessageList(sessionId)
+      const uploaded = attachmentsBySession.value[sessionId]
+        ? [...attachmentsBySession.value[sessionId]]
+        : []
+      for (const file of files) {
+        const data = await uploadSessionFile(authStore.user.id, sessionId, file)
+        uploaded.push({
+          id: data.file_id,
+          name: data.file_name,
+          size: data.size,
+          mime: data.mime,
+        })
+      }
+      setAttachments(sessionId, uploaded)
+    } catch (err) {
+      console.error(err)
+      ElMessage.error(err.message || 'Upload failed')
+      throw err
+    } finally {
+      uploading.value = false
+    }
+  }
+
+  function removeAttachment(fileId, sessionId = currentSessionId.value) {
+    if (!sessionId || !attachmentsBySession.value[sessionId]) {
+      return
+    }
+    setAttachments(
+      sessionId,
+      attachmentsBySession.value[sessionId].filter((item) => item.id !== fileId),
+    )
   }
 
   async function saveToken(providerName, token) {
@@ -298,6 +361,8 @@ export const useSessionStore = defineStore('session', () => {
     currentSessionId,
     currentMessages,
     currentSessionTitle,
+    currentAttachments,
+    uploading,
     provider,
     model,
     providers: PROVIDERS,
@@ -311,6 +376,8 @@ export const useSessionStore = defineStore('session', () => {
     resumeSession,
     removeSession,
     sendMessage,
+    uploadFiles,
+    removeAttachment,
     saveToken,
     removeToken,
     fetchTokens,

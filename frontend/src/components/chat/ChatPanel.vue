@@ -7,6 +7,7 @@ import { renderMarkdown } from '../../utils/markdown'
 const sessionStore = useSessionStore()
 const messageInput = ref('')
 const messageContainer = ref(null)
+const fileInput = ref(null)
 
 const VISIBLE_WINDOW = 50
 const messages = computed(() => {
@@ -17,6 +18,8 @@ const messages = computed(() => {
   return list.slice(list.length - VISIBLE_WINDOW)
 })
 const sending = computed(() => sessionStore.sending)
+const attachments = computed(() => sessionStore.currentAttachments)
+const uploading = computed(() => sessionStore.uploading)
 
 function scrollToBottom() {
   nextTick(() => {
@@ -52,6 +55,28 @@ function handleEnterKey(event) {
     return
   }
   handleSend()
+}
+
+function triggerFilePicker() {
+  fileInput.value?.click()
+}
+
+async function handleFileChange(event) {
+  const files = event.target.files
+  if (!files || !files.length) {
+    return
+  }
+  try {
+    await sessionStore.uploadFiles(files)
+  } catch (err) {
+    ElMessage.error(err.message || 'Upload failed')
+  } finally {
+    event.target.value = ''
+  }
+}
+
+function handleRemoveAttachment(fileId) {
+  sessionStore.removeAttachment(fileId)
 }
 </script>
 
@@ -116,6 +141,25 @@ function handleEnterKey(event) {
     </div>
 
     <footer class="chat-panel__composer">
+      <input
+        ref="fileInput"
+        type="file"
+        class="composer__file-input"
+        multiple
+        @change="handleFileChange"
+      />
+      <div v-if="attachments.length" class="composer__attachments">
+        <div v-for="file in attachments" :key="file.id" class="attachment-chip">
+          <span class="attachment-chip__name">{{ file.name }}</span>
+          <button
+            type="button"
+            class="attachment-chip__remove"
+            @click="handleRemoveAttachment(file.id)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
       <el-input
         v-model="messageInput"
         type="textarea"
@@ -125,15 +169,25 @@ function handleEnterKey(event) {
         @keydown.enter.stop.prevent="handleEnterKey"
         @keydown.shift.enter.stop
       />
-      <el-button
-        type="primary"
-        class="composer__send"
-        :loading="sending"
-        :disabled="sending"
-        @click="handleSend"
-      >
-        Send
-      </el-button>
+      <div class="composer__actions">
+        <el-button
+          class="composer__attach"
+          :loading="uploading"
+          :disabled="uploading || sending"
+          @click="triggerFilePicker"
+        >
+          Attach files
+        </el-button>
+        <el-button
+          type="primary"
+          class="composer__send"
+          :loading="sending"
+          :disabled="sending"
+          @click="handleSend"
+        >
+          Send
+        </el-button>
+      </div>
     </footer>
   </section>
 </template>
@@ -231,11 +285,58 @@ function handleEnterKey(event) {
   border-top: 1px solid var(--el-border-color-lighter);
   padding: 1.25rem;
   display: flex;
-  gap: 1rem;
+  flex-direction: column;
+  gap: 0.75rem;
   background: #fff;
 }
 
+.composer__file-input {
+  display: none;
+}
+
+.composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 16px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.85rem;
+  color: #1f2937;
+}
+
+.attachment-chip__name {
+  margin-right: 0.35rem;
+}
+
+.attachment-chip__remove {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  color: #6b7280;
+  padding: 0;
+}
+
+.attachment-chip__remove:hover {
+  color: #111827;
+}
+
+.composer__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.composer__attach,
 .composer__send {
-  align-self: flex-start;
+  min-width: 110px;
 }
 </style>

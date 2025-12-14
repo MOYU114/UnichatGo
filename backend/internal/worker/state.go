@@ -12,10 +12,12 @@ type userState struct {
 	sessions  map[int64]*models.Session
 	history   map[int64][]*models.Message
 	resources map[int64]*sessionResources
+	files     map[int64][]*models.TempFile
 }
 
 type AsCalling interface {
 	GenerateTitle(ctx context.Context, messages []*models.Message) (string, error)
+	SummarizeFile(ctx context.Context, content []*models.Message) (string, error)
 }
 
 type AICalling interface {
@@ -35,6 +37,7 @@ func newUserState() *userState {
 		sessions:  make(map[int64]*models.Session),
 		history:   make(map[int64][]*models.Message),
 		resources: make(map[int64]*sessionResources),
+		files:     make(map[int64][]*models.TempFile),
 	}
 }
 
@@ -61,6 +64,10 @@ func (s *userState) promoteSession(pendingID, realID int64) {
 		if history, ok := s.history[pendingID]; ok {
 			delete(s.history, pendingID)
 			s.history[realID] = history
+		}
+		if files, ok := s.files[pendingID]; ok {
+			delete(s.files, pendingID)
+			s.files[realID] = files
 		}
 		delete(s.ready, pendingID)
 	}
@@ -109,6 +116,7 @@ func (s *userState) purgeCache(sessionID int64) {
 	delete(s.sessions, sessionID)
 	delete(s.history, sessionID)
 	delete(s.resources, sessionID)
+	delete(s.files, sessionID)
 	s.mu.Unlock()
 }
 
@@ -118,6 +126,7 @@ func (s *userState) reset() {
 	s.sessions = make(map[int64]*models.Session)
 	s.history = make(map[int64][]*models.Message)
 	s.resources = make(map[int64]*sessionResources)
+	s.files = make(map[int64][]*models.TempFile)
 	s.mu.Unlock()
 }
 
@@ -134,4 +143,16 @@ func (s *userState) getResources(sessionID int64) *sessionResources {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.resources[sessionID]
+}
+
+func (s *userState) setFiles(sessionID int64, files []*models.TempFile) {
+	s.mu.Lock()
+	s.files[sessionID] = files
+	s.mu.Unlock()
+}
+
+func (s *userState) getFiles(sessionID int64) []*models.TempFile {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.files[sessionID]
 }

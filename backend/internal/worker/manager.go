@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +12,10 @@ import (
 	"unichatgo/internal/models"
 	"unichatgo/internal/service/ai"
 	"unichatgo/internal/service/assistant"
+
+	"github.com/cloudwego/eino-ext/components/document/loader/file"
+	"github.com/cloudwego/eino/components/document"
+	"github.com/cloudwego/eino/components/document/parser"
 )
 
 type SessionRequest struct {
@@ -19,6 +25,7 @@ type SessionRequest struct {
 	Provider  string
 	Model     string
 	Token     string
+	Files     []*models.TempFile
 	Message   *models.Message
 }
 
@@ -55,6 +62,9 @@ type Assistant interface {
 	CreateSession(ctx context.Context, userID int64, title string) (*models.Session, error)
 	GetSessionWithMessages(ctx context.Context, userID, sessionID int64) (*models.Session, []*models.Message, error)
 	UpdateSessionTitle(ctx context.Context, userID, sessionID int64, title string) error
+	ListSessionTempFiles(ctx context.Context, userID, sessionID int64) ([]*models.TempFile, error)
+	AddMessage(ctx context.Context, msg models.Message) (*models.Message, error)
+	UpdateTempFileSummary(ctx context.Context, fileID int64, summary string, messageID int64) error
 }
 
 type Manager struct {
@@ -62,6 +72,7 @@ type Manager struct {
 	dispatcher     *Dispatcher
 	state          map[int64]*userState
 	asst           Assistant
+	fileLoader     *file.FileLoader
 	enqueueTimeout time.Duration
 }
 
@@ -113,9 +124,26 @@ func NewManager(asst Assistant, cfg DispatcherConfig) *Manager {
 	if cfg.WorkerIdleTimeout <= 0 {
 		cfg.WorkerIdleTimeout = defaultWorkerIdle
 	}
+
+	extParser, err := parser.NewExtParser(context.Background(), &parser.ExtParserConfig{
+		FallbackParser: parser.TextParser{},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	fileLoader, err := file.NewFileLoader(context.Background(), &file.FileLoaderConfig{
+		UseNameAsID: true,
+		Parser:      extParser,
+	})
+	if err != nil {
+		panic(err)
+	}
+
 	m := &Manager{
 		state:          make(map[int64]*userState),
 		asst:           asst,
+		fileLoader:     fileLoader,
 		enqueueTimeout: cfg.EnqueueTimeout,
 	}
 	// cfg.WorkerIdleTimeout check in pool.go
@@ -287,6 +315,19 @@ func (m *Manager) handleStream(task streamTask) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	files, err := m.asst.ListSessionTempFiles(ctx, req.UserID, req.SessionID)
+	if err != nil {
+		if task.resultCh != nil {
+			task.resultCh <- workerReturn{err: err}
+		}
+		return
+	}
+	state.setFiles(req.SessionID, files)
+	req.Files = files
+	if len(files) > 0 {
+		ctx = ai.WithTempFiles(ctx, files)
+	}
+	ctx = ai.WithToolSession(ctx, req.UserID, req.SessionID)
 	res, err := m.ensureResources(state, req.SessionRequest)
 	if err != nil {
 		if task.resultCh != nil {
@@ -297,7 +338,7 @@ func (m *Manager) handleStream(task streamTask) {
 
 	history := state.getHistory(req.SessionID)
 	var title string
-	if len(history) == 0 {
+	if !hasUserMessage(history) {
 		var titleMsgs []*models.Message
 		if req.Message != nil {
 			titleMsgs = []*models.Message{req.Message}
@@ -329,6 +370,23 @@ func (m *Manager) handleStream(task streamTask) {
 		}
 	}
 
+	if len(req.Files) > 0 {
+		if res.as == nil {
+			if task.resultCh != nil {
+				task.resultCh <- workerReturn{err: errors.New("summarizer unavailable")}
+			}
+			return
+		}
+		if err := m.attachFileSummaries(ctx, state, req, res, &history); err != nil {
+			if task.resultCh != nil {
+				task.resultCh <- workerReturn{err: err}
+			}
+			return
+		}
+		state.setHistory(req.SessionID, history)
+		state.setFiles(req.SessionID, req.Files)
+	}
+
 	if req.Message != nil {
 		history = append(history, req.Message)
 		state.setHistory(req.SessionID, history)
@@ -355,6 +413,15 @@ func (m *Manager) handleStream(task streamTask) {
 	if task.resultCh != nil {
 		task.resultCh <- workerReturn{aiMessage: aiMsg, title: title}
 	}
+}
+
+func hasUserMessage(history []*models.Message) bool {
+	for _, msg := range history {
+		if msg != nil && msg.Role == models.RoleUser {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) ensureResources(state *userState, req SessionRequest) (*sessionResources, error) {
@@ -385,4 +452,67 @@ func (m *Manager) ensureResources(state *userState, req SessionRequest) (*sessio
 	}
 	state.setResources(req.SessionID, res)
 	return res, nil
+}
+
+func (m *Manager) attachFileSummaries(ctx context.Context, state *userState, req StreamRequest, res *sessionResources, history *[]*models.Message) error {
+	for _, tempFile := range req.Files {
+		if tempFile == nil || tempFile.StoredPath == "" {
+			continue
+		}
+		if tempFile.Summary != "" {
+			continue
+		}
+		summary, err := m.generateFileSummary(ctx, res, tempFile)
+		if err != nil {
+			return err
+		}
+		if summary == "" {
+			continue
+		}
+		msg, err := m.asst.AddMessage(ctx, models.Message{
+			UserID:    req.UserID,
+			SessionID: req.SessionID,
+			Role:      models.RoleSystem,
+			Content:   fmt.Sprintf("Summary of %s (file_id=%d):\n%s", tempFile.FileName, tempFile.ID, summary),
+		})
+		if err != nil {
+			return err
+		}
+		if err := m.asst.UpdateTempFileSummary(ctx, tempFile.ID, summary, msg.ID); err != nil {
+			return err
+		}
+		tempFile.Summary = summary
+		tempFile.SummaryMessageID = msg.ID
+		state.appendHistory(req.SessionID, msg)
+		*history = append(*history, msg)
+	}
+	return nil
+}
+
+func (m *Manager) generateFileSummary(ctx context.Context, res *sessionResources, file *models.TempFile) (string, error) {
+	docs, err := m.fileLoader.Load(ctx, document.Source{URI: file.StoredPath})
+	if err != nil {
+		return "", err
+	}
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("File name: %s\n\n", file.FileName))
+	for _, doc := range docs {
+		content := strings.TrimSpace(doc.Content)
+		if content == "" {
+			continue
+		}
+		builder.WriteString(content)
+		builder.WriteString("\n\n")
+	}
+	payload := strings.TrimSpace(builder.String())
+	if payload == "" {
+		return "", errors.New("file content empty")
+	}
+	messages := []*models.Message{
+		{
+			Role:    models.RoleUser,
+			Content: payload,
+		},
+	}
+	return res.as.SummarizeFile(ctx, messages)
 }

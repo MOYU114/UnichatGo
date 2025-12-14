@@ -58,6 +58,30 @@ export async function streamConversation(userId, payload, handlers = {}) {
   }
 }
 
+export async function uploadSessionFile(userId, sessionId, file) {
+  if (!file) {
+    throw new Error('File is required')
+  }
+  const baseURL = getAPIBase()
+  const csrfToken = getCSRFCookie()
+  const formData = new FormData()
+  formData.append('session_id', sessionId)
+  formData.append('file', file)
+  const response = await fetch(`${baseURL}/users/${userId}/uploads`, {
+    method: 'POST',
+    headers: {
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+    },
+    credentials: 'include',
+    body: formData,
+  })
+  if (!response.ok) {
+    const message = await response.text().catch(() => '')
+    throw new Error(message || 'Upload failed')
+  }
+  return response.json()
+}
+
 function parseSSEChunk(chunk) {
   let event = ''
   let data = ''
