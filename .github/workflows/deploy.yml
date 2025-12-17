@@ -30,11 +30,15 @@ jobs:
             export MYSQL_HOST='${{ secrets.MYSQL_HOST }}'
             export MYSQL_UNICHATGO_PASSWD='${{ secrets.MYSQL_UNICHATGO_PASSWD }}'
             export MYSQL_ROOT_PASSWD='${{ secrets.MYSQL_ROOT_PASSWD }}'
+            export REDIS_PASSWD='${{ secrets.REDIS_HOST }}'
+            export REDIS_PASSWD='${{ secrets.REDIS_PASSWD }}'
             cd ~/UnichatGo
             docker compose down
             git pull
             sed -e "s|\${MYSQL_HOST}|${MYSQL_HOST}|g" \
                 -e "s|\${MYSQL_UNICHATGO_PASSWD}|${MYSQL_UNICHATGO_PASSWD}|g" \
+                -e "s|\${REDIS_HOST}|${REDIS_HOST}|g" \
+                -e "s|\${REDIS_PASSWD}|${REDIS_PASSWD}|g" \
                 backend/config.json.example > backend/config.json
             docker compose build
             docker compose up -d --force-recreate

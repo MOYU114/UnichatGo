@@ -589,8 +589,8 @@ func newTestServer(t *testing.T) (*gin.Engine, *sql.DB, *Handler) {
 	if err != nil {
 		t.Fatalf("assistant service: %v", err)
 	}
-	authSvc := auth.NewService(db, time.Hour)
-	handler := NewHandler(asst, authSvc, worker.DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10}, t.TempDir(), assistant.DefaultTempFileTTL)
+	authSvc := auth.NewService(db, nil, time.Hour)
+	handler := NewHandler(asst, authSvc, worker.DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10}, t.TempDir(), assistant.DefaultTempFileTTL, nil)
 	handler.workers = newMockWorker(asst)
 
 	router := gin.New()

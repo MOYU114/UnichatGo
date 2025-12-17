@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"unichatgo/internal/models"
+	"unichatgo/internal/redis"
 	"unichatgo/internal/service/ai"
 	"unichatgo/internal/service/assistant"
 
@@ -73,6 +74,7 @@ type Manager struct {
 	state          map[int64]*userState
 	asst           Assistant
 	fileLoader     *file.FileLoader
+	rdb            *stateRedis
 	enqueueTimeout time.Duration
 }
 
@@ -105,7 +107,7 @@ const (
 	defaultEnqueueTimout = time.Second
 )
 
-func NewManager(asst Assistant, cfg DispatcherConfig) *Manager {
+func NewManager(asst Assistant, cfg DispatcherConfig, cacheClient *redis.Client) *Manager {
 	if cfg.MinWorkers <= 0 {
 		cfg.MinWorkers = defaultMinWorkers
 	}
@@ -140,14 +142,18 @@ func NewManager(asst Assistant, cfg DispatcherConfig) *Manager {
 		panic(err)
 	}
 
+	cacheHelper := newStateCache(cacheClient)
+
 	m := &Manager{
 		state:          make(map[int64]*userState),
 		asst:           asst,
 		fileLoader:     fileLoader,
+		rdb:            cacheHelper,
 		enqueueTimeout: cfg.EnqueueTimeout,
 	}
 	// cfg.WorkerIdleTimeout check in pool.go
 	m.dispatcher = NewDispatcher(cfg.MinWorkers, cfg.MaxWorkers, cfg.QueueSize, m, cfg.WorkerIdleTimeout)
+	cacheHelper.startListener(m.applyInvalidation)
 	return m
 }
 
@@ -162,6 +168,12 @@ func (m *Manager) getState(userID int64) *userState {
 	state := newUserState()
 	m.state[userID] = state
 	return state
+}
+
+func (m *Manager) getStateIfExists(userID int64) *userState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[userID]
 }
 
 func (m *Manager) enqueueJob(job Job) error {
@@ -236,30 +248,60 @@ func (m *Manager) Stream(req StreamRequest) (*models.Message, string, error) {
 
 // Purge Clean one session of userX
 func (m *Manager) Purge(userID, sessionID int64) {
-	state := m.getState(userID)
+	state := m.getStateIfExists(userID)
 	if state == nil {
 		return
 	}
 	state.purgeCache(sessionID)
+	m.rdb.invalidateSession(sessionID)
+	m.rdb.publishInvalidation(invalidateMessage{
+		UserID:    userID,
+		SessionID: sessionID,
+		Scope:     scopeSession,
+	})
 }
 
 func (m *Manager) InvalidateTempFiles(userID, sessionID int64) {
-	state := m.getState(userID)
+	state := m.getStateIfExists(userID)
 	if state == nil {
 		return
 	}
 	state.clearFiles(sessionID)
+	m.rdb.invalidateFiles(sessionID)
+	m.rdb.publishInvalidation(invalidateMessage{
+		UserID:    userID,
+		SessionID: sessionID,
+		Scope:     scopeFiles,
+	})
 }
 
-// ResetUser Reset all cache of userX
+// ResetUser Reset all mem+redis rdb of userX
 func (m *Manager) ResetUser(userID int64) {
+	sessionIDs := m.resetUserState(userID)
+	for _, sid := range sessionIDs {
+		m.rdb.invalidateSession(sid)
+	}
+	m.rdb.publishInvalidation(invalidateMessage{
+		UserID: userID,
+		Scope:  scopeUser,
+	})
+}
+
+// resetUserState reset mem rdb
+func (m *Manager) resetUserState(userID int64) []int64 {
 	m.mu.Lock()
-	if state, ok := m.state[userID]; ok {
+	state, ok := m.state[userID]
+	if ok {
 		delete(m.state, userID)
-		state.reset()
 	}
 	m.mu.Unlock()
 	m.dispatcher.CancelUser(userID)
+	if !ok || state == nil {
+		return nil
+	}
+	sessionIDs := state.sessionIDs()
+	state.reset()
+	return sessionIDs
 }
 
 func (m *Manager) handleInit(task sessionTask) {
@@ -289,12 +331,17 @@ func (m *Manager) handleInit(task sessionTask) {
 		history = make([]*models.Message, 0)
 		req.SessionID = session.ID
 	} else {
-		session, history, err = m.asst.GetSessionWithMessages(ctx, req.UserID, req.SessionID)
-		if err != nil {
-			if task.resultCh != nil {
-				task.resultCh <- workerReturn{err: err}
+		if cachedSession, cachedHistory, ok := m.rdb.loadSession(req.UserID, req.SessionID); ok {
+			session = cachedSession
+			history = cachedHistory
+		} else {
+			session, history, err = m.asst.GetSessionWithMessages(ctx, req.UserID, req.SessionID)
+			if err != nil {
+				if task.resultCh != nil {
+					task.resultCh <- workerReturn{err: err}
+				}
+				return
 			}
-			return
 		}
 	}
 
@@ -307,6 +354,7 @@ func (m *Manager) handleInit(task sessionTask) {
 
 	state.setSession(session)
 	state.setHistory(session.ID, history)
+	m.rdb.cacheSession(session, history)
 	state.promoteSession(pendingID, session.ID)
 	state.markReady(session.ID)
 
@@ -327,16 +375,25 @@ func (m *Manager) handleStream(task streamTask) {
 	attachments := req.Files
 	if forcedAttachments {
 		state.setFiles(req.SessionID, attachments)
+		m.rdb.cacheFiles(req.SessionID, attachments)
 	} else {
 		attachments = state.getFiles(req.SessionID)
 		if attachments == nil {
-			var err error
-			attachments, err = m.asst.ListSessionTempFiles(ctx, req.UserID, req.SessionID)
-			if err != nil {
-				if task.resultCh != nil {
-					task.resultCh <- workerReturn{err: err}
+			var ok bool
+			if cached, hit := m.rdb.loadFiles(req.UserID, req.SessionID); hit {
+				attachments = cached
+				ok = true
+			}
+			if !ok || attachments == nil {
+				var err error
+				attachments, err = m.asst.ListSessionTempFiles(ctx, req.UserID, req.SessionID)
+				if err != nil {
+					if task.resultCh != nil {
+						task.resultCh <- workerReturn{err: err}
+					}
+					return
 				}
-				return
+				m.rdb.cacheFiles(req.SessionID, attachments)
 			}
 			state.setFiles(req.SessionID, attachments)
 		}
@@ -402,6 +459,7 @@ func (m *Manager) handleStream(task streamTask) {
 			return
 		}
 		state.setHistory(req.SessionID, history)
+		m.rdb.cacheHistory(req.SessionID, history)
 	}
 
 	chatHistory := append([]*models.Message{}, history...)
@@ -418,6 +476,7 @@ func (m *Manager) handleStream(task streamTask) {
 		chatHistory = append(chatHistory, req.Message)
 		history = append(history, req.Message)
 		state.setHistory(req.SessionID, history)
+		m.rdb.cacheHistory(req.SessionID, history)
 	}
 
 	var cb func(string) error
@@ -438,6 +497,7 @@ func (m *Manager) handleStream(task streamTask) {
 		return
 	}
 	state.appendHistory(req.SessionID, aiMsg)
+	m.rdb.cacheHistory(req.SessionID, state.getHistory(req.SessionID))
 	if task.resultCh != nil {
 		task.resultCh <- workerReturn{aiMessage: aiMsg, title: title}
 	}
@@ -574,6 +634,7 @@ func (m *Manager) attachFileSummaries(ctx context.Context, state *userState, req
 		state.appendHistory(req.SessionID, msg)
 		*history = append(*history, msg)
 	}
+	m.rdb.cacheFiles(req.SessionID, req.Files)
 	return nil
 }
 
@@ -603,4 +664,32 @@ func (m *Manager) generateFileSummary(ctx context.Context, res *sessionResources
 		},
 	}
 	return res.as.SummarizeFile(ctx, messages)
+}
+
+func (m *Manager) applyInvalidation(msg invalidateMessage) {
+	switch msg.Scope {
+	case scopeUser:
+		ids := m.resetUserState(msg.UserID)
+		for _, sid := range ids {
+			m.rdb.invalidateSession(sid)
+		}
+	case scopeSession:
+		m.purgeSessionState(msg.UserID, msg.SessionID)
+		m.rdb.invalidateSession(msg.SessionID)
+	case scopeFiles:
+		m.clearSessionFiles(msg.UserID, msg.SessionID)
+		m.rdb.invalidateFiles(msg.SessionID)
+	}
+}
+
+func (m *Manager) purgeSessionState(userID, sessionID int64) {
+	if state := m.getStateIfExists(userID); state != nil {
+		state.purgeCache(sessionID)
+	}
+}
+
+func (m *Manager) clearSessionFiles(userID, sessionID int64) {
+	if state := m.getStateIfExists(userID); state != nil {
+		state.clearFiles(sessionID)
+	}
 }

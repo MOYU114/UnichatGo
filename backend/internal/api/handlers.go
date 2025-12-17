@@ -17,6 +17,7 @@ import (
 
 	"unichatgo/internal/auth"
 	"unichatgo/internal/models"
+	"unichatgo/internal/redis"
 	"unichatgo/internal/service/assistant"
 	"unichatgo/internal/worker"
 )
@@ -39,11 +40,11 @@ type Handler struct {
 }
 
 // NewHandler constructs a Handler instance.
-func NewHandler(service *assistant.Service, authService *auth.Service, cfg worker.DispatcherConfig, fileBase string, fileTTL time.Duration) *Handler {
+func NewHandler(service *assistant.Service, authService *auth.Service, cfg worker.DispatcherConfig, fileBase string, fileTTL time.Duration, cacheClient *redis.Client) *Handler {
 	return &Handler{
 		assistant: service,
 		auth:      authService,
-		workers:   worker.NewManager(service, cfg),
+		workers:   worker.NewManager(service, cfg, cacheClient),
 		fileBase:  fileBase,
 		fileTTL:   fileTTL,
 	}
@@ -366,7 +367,7 @@ func (h *Handler) captureInput(c *gin.Context) {
 
 	streamCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
 	defer cancel()
-
+	// SSE Request construction
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
@@ -401,7 +402,7 @@ func (h *Handler) captureInput(c *gin.Context) {
 		flusher.Flush()
 		return nil
 	}
-
+	// Send request
 	if err := sendEvent("ack", gin.H{
 		"message": gin.H{
 			"id":         message.ID,
@@ -414,7 +415,7 @@ func (h *Handler) captureInput(c *gin.Context) {
 	}); err != nil {
 		return
 	}
-
+	// Stream sent
 	streamReq := worker.StreamRequest{
 		SessionRequest: worker.SessionRequest{
 			Context:   streamCtx,

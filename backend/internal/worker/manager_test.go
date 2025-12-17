@@ -54,7 +54,7 @@ func TestWorkerStateCacheOperations(t *testing.T) {
 }
 
 func TestManagerPurgeAndStop(t *testing.T) {
-	manager := NewManager(newMockAssistant(), DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10})
+	manager := NewManager(newMockAssistant(), DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10}, nil)
 	state := manager.getState(42)
 
 	state.setSession(&models.Session{ID: 99, Title: "cached"})
@@ -80,7 +80,7 @@ func TestManagerPurgeAndStop(t *testing.T) {
 
 func TestDispatcherInitAndStream(t *testing.T) {
 	mockAsst := newMockAssistant()
-	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10})
+	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10}, nil)
 
 	origAI := aiFactory
 	origTitle := titleFactory
@@ -132,7 +132,7 @@ func TestDispatcherInitAndStream(t *testing.T) {
 
 func TestDispatcherJobOrder(t *testing.T) {
 	mockAsst := newMockAssistant()
-	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10})
+	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10}, nil)
 
 	origAI := aiFactory
 	origTitle := titleFactory
@@ -195,7 +195,7 @@ func TestDispatcherJobOrder(t *testing.T) {
 
 func TestDispatcherQueuesWhenWorkerBusy(t *testing.T) {
 	mockAsst := newMockAssistant()
-	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10})
+	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 2, MaxWorkers: 2, QueueSize: 10}, nil)
 
 	origAI := aiFactory
 	origTitle := titleFactory
@@ -272,7 +272,7 @@ func TestDispatcherQueuesWhenWorkerBusy(t *testing.T) {
 
 func TestManagerHighLoadAllowsOtherUsers(t *testing.T) {
 	mockAsst := newMockAssistant()
-	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 1, MaxWorkers: 3, QueueSize: 10})
+	manager := NewManager(mockAsst, DispatcherConfig{MinWorkers: 1, MaxWorkers: 3, QueueSize: 10}, nil)
 
 	block := make(chan struct{})
 	started := make(chan struct{})

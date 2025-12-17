@@ -20,6 +20,7 @@ COPY --from=builder /app/unichatgo .
 COPY config.json ./config.json
 RUN mkdir -p /app/data
 RUN mkdir -p /app/data/mysql
+RUN mkdir -p /app/data/redis
 
 ENV UNICHATGO_CONFIG=/app/config.json
 EXPOSE 8090

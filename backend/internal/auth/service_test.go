@@ -3,10 +3,14 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"net"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	"unichatgo/internal/config"
+	"unichatgo/internal/redis"
 	"unichatgo/internal/storage"
 )
 
@@ -15,7 +19,7 @@ func TestAuthIssueValidateRevoke(t *testing.T) {
 	defer db.Close()
 	insertUser(t, db, 1)
 
-	svc := NewService(db, time.Hour)
+	svc := NewService(db, nil, time.Hour)
 	token, err := svc.IssueToken(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("IssueToken error: %v", err)
@@ -51,7 +55,7 @@ func TestAuthValidateExpiredToken(t *testing.T) {
 	defer db.Close()
 	insertUser(t, db, 2)
 
-	svc := NewService(db, 10*time.Millisecond)
+	svc := NewService(db, nil, 10*time.Millisecond)
 	token, err := svc.IssueToken(context.Background(), 2)
 	if err != nil {
 		t.Fatalf("IssueToken error: %v", err)
@@ -96,4 +100,94 @@ func insertUser(t *testing.T, db *sql.DB, id int64) {
 	if err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
+}
+
+func TestAuthTokenCacheUsesRedis(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	insertUser(t, db, 10)
+
+	cacheClient, cleanup := newRedisCacheClient(t)
+	defer cleanup()
+
+	svc := NewService(db, cacheClient, time.Hour)
+	ctx := context.Background()
+
+	token, err := svc.IssueToken(ctx, 10)
+	if err != nil {
+		t.Fatalf("IssueToken: %v", err)
+	}
+
+	raw := cacheClient.Raw()
+	if raw == nil {
+		t.Fatalf("redis raw client nil")
+	}
+	key := redisTokenPrefix + token
+	got, err := raw.Get(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("get redis token: %v", err)
+	}
+	if got != "10" {
+		t.Fatalf("expected user 10 in rdb, got %s", got)
+	}
+
+	_, _ = db.Exec(`DELETE FROM user_tokens WHERE token = ?`, token)
+	userID, err := svc.ValidateToken(ctx, token)
+	if err != nil || userID != 10 {
+		t.Fatalf("ValidateToken via rdb failed: id=%d err=%v", userID, err)
+	}
+
+	if err := svc.RevokeToken(ctx, token); err != nil {
+		t.Fatalf("RevokeToken: %v", err)
+	}
+	if _, err := raw.Get(ctx, key).Result(); err == nil {
+		t.Fatalf("expected redis key deleted")
+	}
+	if _, err := svc.ValidateToken(ctx, token); err == nil {
+		t.Fatalf("expected error after revoke and rdb delete")
+	}
+}
+
+func newRedisCacheClient(t *testing.T) (*redis.Client, func()) {
+	t.Helper()
+	addr := os.Getenv("TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("set TEST_REDIS_ADDR to run redis-backed auth tests")
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("atoi port: %v", err)
+	}
+	db := 0
+	if v := os.Getenv("TEST_REDIS_DB"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			db = parsed
+		}
+	}
+	cfg := &config.Config{
+		Redis: config.RedisConfig{
+			Host: host,
+			Port: port,
+			DB:   db,
+		},
+	}
+	client, err := redis.NewRedisClient(cfg)
+	if err != nil {
+		t.Fatalf("redis client: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if raw := client.Raw(); raw != nil {
+		if err := raw.FlushDB(ctx).Err(); err != nil {
+			t.Fatalf("flush db: %v", err)
+		}
+	}
+	cleanup := func() {
+		client.Close()
+	}
+	return client, cleanup
 }

@@ -12,6 +12,7 @@ type Config struct {
 	BasicConfig BasicConfig               `json:"basic_config"`
 	Providers   map[string]ProviderConfig `json:"providers"`
 	Databases   map[string]DatabaseConfig `json:"databases"`
+	Redis       RedisConfig               `json:"redis"`
 }
 
 type DatabaseConfig struct {
@@ -40,6 +41,14 @@ type BasicConfig struct {
 	FileBaseDir       string `json:"file_base_dir"`
 	TempFileTTL       int    `json:"temp_file_ttl_minutes"`
 	TempCleanInterval int    `json:"temp_file_clean_interval_minutes"`
+}
+
+type RedisConfig struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	DB       int    `json:"db_name"`
 }
 
 // Load reads configuration from the provided path (defaults to config.json).

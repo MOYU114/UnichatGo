@@ -19,6 +19,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  redis:
+    image: redis:8.4
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWD}
+    command: >
+      sh -c '
+        redis-server --appendonly yes --requirepass ${REDIS_PASSWD}
+      '
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./backend/data/redis:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWD}", "PING" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
   backend:
     build:
       context: ./backend
@@ -34,6 +52,8 @@ services:
       - ./backend/data:/app/data
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
   frontend:
     build:

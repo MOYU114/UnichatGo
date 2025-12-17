@@ -5,15 +5,16 @@ import (
 	"log"
 	"os"
 	"time"
-	"unichatgo/internal/worker"
-
-	"github.com/gin-gonic/gin"
 
 	"unichatgo/internal/api"
 	"unichatgo/internal/auth"
 	"unichatgo/internal/config"
+	"unichatgo/internal/redis"
 	"unichatgo/internal/service/assistant"
 	"unichatgo/internal/storage"
+	"unichatgo/internal/worker"
+
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -33,6 +34,12 @@ func main() {
 		log.Fatalf("open database: %v", err)
 	}
 	defer db.Close()
+	rdb, err := redis.NewRedisClient(cfg)
+	if err != nil {
+		log.Fatalf("create redis client: %v", err)
+	}
+	defer rdb.Close()
+
 	// Create necessary tables: users, apiKeys, sessions, messages
 	if err := storage.Migrate(db, dbType); err != nil {
 		log.Fatalf("migrate database: %v", err)
@@ -55,7 +62,7 @@ func main() {
 		cleanInterval = assistant.DefaultTempFileCleanupInterval
 	}
 	assistantService.StartTempFileCleaner(cleanCtx, cleanInterval)
-	authService := auth.NewService(db, 24*time.Hour)
+	authService := auth.NewService(db, rdb, 24*time.Hour)
 	fileBase := cfg.BasicConfig.FileBaseDir
 	if fileBase == "" {
 		fileBase = "./data/uploads"
@@ -64,7 +71,7 @@ func main() {
 	if tempTTL <= 0 {
 		tempTTL = assistant.DefaultTempFileTTL
 	}
-	handlers := api.NewHandler(assistantService, authService, workerCfg, fileBase, tempTTL)
+	handlers := api.NewHandler(assistantService, authService, workerCfg, fileBase, tempTTL, rdb)
 
 	router := gin.Default()
 	handlers.RegisterRoutes(router)

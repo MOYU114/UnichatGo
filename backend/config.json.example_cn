@@ -38,5 +38,11 @@
       "db_name": "unichatgo",
       "params": "charset=utf8mb4&parseTime=true&loc=Local"
     }
-  }
+  },
+  "redis": {
+    "host": "${REDIS_HOST}",
+    "port": 6379,
+    "password": "${REDIS_PASSWD}",
+    "db_name":0
+ }
 }

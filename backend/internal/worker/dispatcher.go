@@ -48,13 +48,13 @@ func (d *Dispatcher) run() {
 	for {
 		// dispatch one job of user in the front of LRU queue
 		if !d.dispatchOne() {
-			job := <-d.JobQueue
+			job := <-d.JobQueue // force congestion
 			d.enqueueJob(job)
 			continue
 		}
 		// if we have a new job, enqueue it and its caller user
 		select {
-		case job := <-d.JobQueue:
+		case job := <-d.JobQueue: // non-congestion
 			d.enqueueJob(job)
 		default:
 		}
@@ -85,8 +85,10 @@ func (d *Dispatcher) enqueueJob(job Job) {
 	}
 	q.jobs = append(q.jobs, job)
 	if q.enqueued {
+		// user already enqueue, skip
 		return
 	}
+	// new user, enqueue
 	q.enqueued = true
 	elem := d.ready.PushBack(userID)
 	d.positions[userID] = elem

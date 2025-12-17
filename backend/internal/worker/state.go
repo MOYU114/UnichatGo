@@ -166,3 +166,13 @@ func (s *userState) clearFiles(sessionID int64) {
 	delete(s.files, sessionID)
 	s.mu.Unlock()
 }
+
+func (s *userState) sessionIDs() []int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]int64, 0, len(s.sessions))
+	for id := range s.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}
