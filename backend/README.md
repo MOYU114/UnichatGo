@@ -8,6 +8,7 @@ Go-based API server that powers user authentication, session management, and str
 - Conversation lifecycle: list sessions, start or resume, delete, and auto-generate titles after the first message.
 - Streaming `/conversation/msg` endpoint that emits `ack`, `stream`, `done`, and optional `error` events.
 - SQLite schema and migrations baked into the binary; no external database required by default.
+- Optional Redis cache used for bearer-token/worker state storage (defaults to disabled; enable via `redis` config block and Docker Compose).
 
 ## Directory Structure
 ```
@@ -18,6 +19,7 @@ backend/
 │   ├── auth                 # Token issuance, middleware, helpers
 │   ├── config               # JSON config loader (UNICHATGO_CONFIG)
 │   ├── models               # User / Session / Message structs
+│   ├── redis                # Redis configure and basic caller
 │   ├── service
 │   │   ├── ai               # Streaming AI model adapter
 │   │   └── assistant        # Domain logic for users, sessions, titles
@@ -75,6 +77,12 @@ Sample minimal config (`config.json`):
       "db_name": "unichatgo",
       "params": "charset=utf8mb4&parseTime=true&loc=Local"
     }
+  },
+  "redis": {
+    "host": "redis",
+    "port": 6379,
+    "password": "password",
+    "db_name": 0
   }
 }
 ```
@@ -84,6 +92,8 @@ Set environment overrides when needed:
 export UNICHATGO_CONFIG=/full/path/to/config.json
 export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)  # 32-byte key used to encrypt provider API tokens
 export UNICHATGO_DB=sqlite3                              # or mysql
+export REDIS_HOST=redis                                # Optional: override redis host (defaults to config.json)
+export REDIS_PASSWORD=password                         # Optional: override redis password
 export GOOGLE_API_KEY=...                              # Optional: enables Google Search tool
 export GOOGLE_SEARCH_ENGINE_ID=...                     # Optional: enables Google Search tool
 export UNICHATGO_WORKER_DEBUG=1                        # Optional: verbose worker scheduling logs
@@ -97,6 +107,12 @@ export UNICHATGO_WORKER_DEBUG=1                        # Optional: verbose worke
 go run ./backend
 ```
 The API listens on `basic.server_address` (defaults to `:8090`).
+
+## Docker Compose Notes
+The top-level `docker-compose.yml` starts `mysql`, `redis`, `backend`, and `frontend` services. When running in Compose:
+- Configure `databases.mysql.host` as `mysql` and `redis.host` as `redis` in `config.json` (already defaulted in the sample).
+- The Redis container enforces the password from `${REDIS_PASSWD}`; ensure `config.json`/environment variables match.
+- Conversation data (and temporary files) are persisted under `backend/data/...`, so mount that directory when deploying elsewhere.
 
 ## Testing
 ```bash

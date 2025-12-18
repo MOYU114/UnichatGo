@@ -17,7 +17,7 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
   npm install
   npm run dev
   ```
-- Docker Compose (with persisted DB):
+- Docker Compose (with persisted MySQL + Redis):
   ```bash
   #  add needed env into current shell, example: 
   export UNICHATGO_APIKEY_KEY=$(openssl rand -base64 32)
@@ -36,7 +36,7 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 ```
 
 ## Backend Highlights
-- Go 1.24+, SQLite/MySQL storage.
+- Go 1.24+, SQLite/MySQL storage, Redis listener and cache.
 - Auth: login issues HttpOnly cookies + CSRF tokens; supports logout and account deletion.
 - Conversations:
   - `POST /users/:id/conversation/start`: create or resume a session (auto-titles first message).
@@ -94,6 +94,7 @@ See `backend/README.md` for detailed API walkthroughs and curl examples.
     - `MYSQL_HOST`: your MySQL IP address;
     - `MYSQL_ROOT_PASSWD`: you root password for MySQL;
     - `MYSQL_UNICHATGO_PASSWD`: you unichatgo (default user name) database password for MySQL.
+- `REDIS_HOST` / `REDIS_PASSWORD` / `REDIS_DB`: Optional overrides when pointing the backend at a non-default Redis instance (defaults provided in `backend/config.json`; Compose uses service name `redis`).
 - `GOOGLE_API_KEY`: Optional; when set with `GOOGLE_SEARCH_ENGINE_ID`, enables the Google Search tool (and unified `web_search` fallback).
 - `GOOGLE_SEARCH_ENGINE_ID`: Optional; Programmable Search Engine ID paired with `GOOGLE_API_KEY`.
 - `VITE_API_BASE_URL`: Frontend override for API endpoint (defaults to `/api` and proxied to `http://localhost:8090` during development).

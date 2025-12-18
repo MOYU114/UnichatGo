@@ -30,7 +30,7 @@ jobs:
             export MYSQL_HOST='${{ secrets.MYSQL_HOST }}'
             export MYSQL_UNICHATGO_PASSWD='${{ secrets.MYSQL_UNICHATGO_PASSWD }}'
             export MYSQL_ROOT_PASSWD='${{ secrets.MYSQL_ROOT_PASSWD }}'
-            export REDIS_PASSWD='${{ secrets.REDIS_HOST }}'
+            export REDIS_HOST='${{ secrets.REDIS_HOST }}'
             export REDIS_PASSWD='${{ secrets.REDIS_PASSWD }}'
             cd ~/UnichatGo
             docker compose down
