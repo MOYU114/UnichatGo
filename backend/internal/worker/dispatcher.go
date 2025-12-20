@@ -18,7 +18,7 @@ type Dispatcher struct {
 
 	mu        sync.Mutex
 	queues    map[int64]*userQueue // job queue for each user
-	ready     *list.List           // LRU queue storing user IDs
+	ready     *list.List           // round-robin queue storing user IDs
 	positions map[int64]*list.Element
 }
 
@@ -46,13 +46,13 @@ func NewDispatcher(minWorkers, maxWorkers, queueSize int, manager *Manager, idle
 
 func (d *Dispatcher) run() {
 	for {
-		// dispatch one job of user in the front of LRU queue
+		// dispatch one job of user in the front of round-robin queue
 		if !d.dispatchOne() {
-			job := <-d.JobQueue // force congestion
+			job := <-d.JobQueue // the queue is empty, force congestion, wait for new job
 			d.enqueueJob(job)
 			continue
 		}
-		// if we have a new job, enqueue it and its caller user
+		// if we have a new job, enqueue it, and dispatch in the next round
 		select {
 		case job := <-d.JobQueue: // non-congestion
 			d.enqueueJob(job)
@@ -94,7 +94,7 @@ func (d *Dispatcher) enqueueJob(job Job) {
 	d.positions[userID] = elem
 }
 
-// dispatchOne get first user in LRU and dispatch its job
+// dispatchOne get first user in round-robin and dispatch its job
 func (d *Dispatcher) dispatchOne() bool {
 	d.mu.Lock()
 	elem := d.ready.Front()

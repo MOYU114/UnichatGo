@@ -34,7 +34,7 @@ func NewWorker(pool *jobChannelPool, manager *Manager) *Worker {
 func (w *Worker) Start() {
 	go func() {
 		for {
-			w.pool.Release(w.jobChannel)
+			w.pool.MarkIdle(w.jobChannel)
 			job := <-w.jobChannel
 			debugLog("[worker-%d] accepted job type=%s", w.id, job.Type)
 			switch job.Type {

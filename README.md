@@ -45,7 +45,7 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 - `POST /users/:id/uploads`: upload temporary files (text or image). Each attachment is assigned a `file_id`, MIME type, size, and TTL; include the desired `file_ids` in subsequent messages to reference them. Text files are chunked through the `temp_file_reader` tool, while images are embedded inline (Base64) for vision-capable models (GPT-4o, Claude 3.5, Gemini 1.5, etc.). Attachment size/TTL limits are configurable in `backend/config.json`.
 - Provider tokens are encrypted using AES-GCM; set `UNICHATGO_APIKEY_KEY` (32-byte key) before running. Users can list/remove their provider tokens via `/api/users/:id/token` (GET/DELETE).
 - File & image support: the backend can handle small text documents and screenshots simultaneously. Text attachments consume your model’s token quota (chunk size defaults to 2k characters per tool call), while inline images depend on the chosen model’s multimodal capability. If no `file_ids` are supplied in a request, the backend still exposes the session’s cached text files for optional lookup but does not force a tool invocation.
-- Per-user Job Queue + LRU Scheduling: Each user maintains an independent task queue, ensuring response order and resource isolation even under high concurrency.
+- Per-user Job Queue + Round-robin Scheduling: Each user maintains an independent task queue, ensuring response order and resource isolation even under high concurrency.
 - Run locally:
   ```bash
   cd backend

@@ -50,6 +50,7 @@ func NewHandler(service *assistant.Service, authService *auth.Service, cfg worke
 	}
 }
 
+// check token userID is match with param userID
 func (h *Handler) requirePathUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, ok := auth.UserIDFromContext(c)

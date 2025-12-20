@@ -50,6 +50,7 @@ func (s *Service) IssueToken(ctx context.Context, userID int64) (string, error) 
 	}
 	now := time.Now().UTC()
 	expiresAt := now.Add(s.tokenTTL)
+	// retry maximum 5 times
 	for i := 0; i < 5; i++ {
 		token, err := generateToken()
 		if err != nil {

@@ -175,14 +175,16 @@ func (p *jobChannelPool) acquire() chan Job {
 			worker.Start()
 			continue
 		}
+		// currently running >= max, not allow to increase workers
+		// now must wait a idle worker
 		debugLog("[worker] waiting for idle worker, running=%d", p.running)
 		p.cond.Wait()
 		p.mu.Unlock()
 	}
 }
 
-// Release add an idle worker into the pool
-func (p *jobChannelPool) Release(ch chan Job) {
+// MarkIdle add an idle worker into the pool
+func (p *jobChannelPool) MarkIdle(ch chan Job) {
 	p.mu.Lock()
 	meta, ok := p.metadata[ch]
 	if !ok || meta.discarded || meta.enqueued {
