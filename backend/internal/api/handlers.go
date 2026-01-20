@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,24 @@ type WorkerManager interface {
 	InvalidateTempFiles(userID, sessionID int64)
 }
 
+type idempotencyEntry struct {
+	done chan struct{}
+	once sync.Once
+
+	userMsg *models.Message
+	aiMsg   *models.Message
+	title   string
+	err     error
+}
+
+func newIdempotencyEntry() *idempotencyEntry {
+	return &idempotencyEntry{done: make(chan struct{})}
+}
+
+func (e *idempotencyEntry) wait() {
+	<-e.done
+}
+
 // Handler wires HTTP routes to the assistant service and manages per-user AI workers.
 type Handler struct {
 	assistant *assistant.Service
@@ -37,16 +56,20 @@ type Handler struct {
 	workers   WorkerManager
 	fileBase  string
 	fileTTL   time.Duration
+
+	clientMessageMu    sync.Mutex
+	clientMessageTable map[string]*idempotencyEntry
 }
 
 // NewHandler constructs a Handler instance.
 func NewHandler(service *assistant.Service, authService *auth.Service, cfg worker.DispatcherConfig, fileBase string, fileTTL time.Duration, cacheClient *redis.Client) *Handler {
 	return &Handler{
-		assistant: service,
-		auth:      authService,
-		workers:   worker.NewManager(service, cfg, cacheClient),
-		fileBase:  fileBase,
-		fileTTL:   fileTTL,
+		assistant:          service,
+		auth:               authService,
+		workers:            worker.NewManager(service, cfg, cacheClient),
+		fileBase:           fileBase,
+		fileTTL:            fileTTL,
+		clientMessageTable: make(map[string]*idempotencyEntry),
 	}
 }
 
@@ -324,11 +347,12 @@ func (h *Handler) getSessionMessages(c *gin.Context) {
 
 // User input interface
 type inputRequest struct {
-	SessionID int64   `json:"session_id"`
-	Content   string  `json:"content"`
-	ModelType string  `json:"model_type"`
-	Provider  string  `json:"provider"`
-	FileIDs   []int64 `json:"file_ids"`
+	SessionID   int64   `json:"session_id"`
+	Content     string  `json:"content"`
+	ModelType   string  `json:"model_type"`
+	Provider    string  `json:"provider"`
+	FileIDs     []int64 `json:"file_ids"`
+	ClientMsgID string  `json:"client_msg_id"`
 }
 
 func (h *Handler) captureInput(c *gin.Context) {
@@ -346,8 +370,20 @@ func (h *Handler) captureInput(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
 		return
 	}
+	if strings.TrimSpace(req.ClientMsgID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_msg_id is required"})
+		return
+	}
+
+	entry, cacheKey, isNew := h.beginIdempotencyEntry(req.SessionID, req.ClientMsgID)
+	if !isNew {
+		// we have a previous response, return that
+		h.respondWithCachedResult(c, entry)
+		return
+	}
 	files, err := h.resolveTempFiles(c.Request.Context(), userID, req.SessionID, req.FileIDs)
 	if err != nil {
+		h.completeIdempotencyEntry(cacheKey, entry, nil, nil, "", err)
 		status := http.StatusBadRequest
 		if errors.Is(err, sql.ErrNoRows) {
 			status = http.StatusNotFound
@@ -357,11 +393,13 @@ func (h *Handler) captureInput(c *gin.Context) {
 	}
 	message, err := h.assistant.AppendMessageToSession(c.Request.Context(), userID, req.SessionID, models.RoleUser, req.Content)
 	if err != nil {
+		h.completeIdempotencyEntry(cacheKey, entry, nil, nil, "", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	token, err := h.assistant.EnsureAIReady(c.Request.Context(), userID, req.Provider)
 	if err != nil {
+		h.completeIdempotencyEntry(cacheKey, entry, nil, nil, "", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -369,10 +407,68 @@ func (h *Handler) captureInput(c *gin.Context) {
 	streamCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
 	defer cancel()
 	// SSE Request construction
+	sendEvent, ok := prepareSSE(c)
+	if !ok {
+		h.completeIdempotencyEntry(cacheKey, entry, nil, nil, "", errors.New("streaming not supported"))
+		return
+	}
+	// Send request
+	if err := sendEvent("ack", gin.H{"message": messagePayload(message)}); err != nil {
+		h.completeIdempotencyEntry(cacheKey, entry, message, nil, "", err)
+		return
+	}
+	// Stream sent
+	streamReq := worker.StreamRequest{
+		SessionRequest: worker.SessionRequest{
+			Context:   streamCtx,
+			UserID:    userID,
+			SessionID: req.SessionID,
+			Provider:  req.Provider,
+			Model:     req.ModelType,
+			Token:     token,
+			Files:     files,
+			Message:   message,
+		},
+		ChunkFn: func(chunk string) error {
+			return sendEvent("stream", gin.H{"content": chunk})
+		},
+	}
+	aiMessage, title, err := h.workers.Stream(streamReq)
+	if err != nil {
+		msg := err.Error()
+		if errors.Is(err, worker.ErrDispatcherBusy) {
+			msg = "server is busy, please retry"
+		}
+		h.completeIdempotencyEntry(cacheKey, entry, message, nil, "", errors.New(msg))
+		_ = sendEvent("error", gin.H{"message": msg})
+		return
+	}
+	_, err = h.assistant.AppendMessageToSession(c.Request.Context(), aiMessage.UserID, aiMessage.SessionID, aiMessage.Role, aiMessage.Content)
+	if err != nil {
+		h.completeIdempotencyEntry(cacheKey, entry, message, nil, "", err)
+		_ = sendEvent("error", gin.H{"message": err.Error()})
+		return
+	}
+	payload := gin.H{
+		"user_message": messagePayload(message),
+		"ai_message":   messagePayload(aiMessage),
+	}
+	if title != "" {
+		payload["title"] = title
+	}
+	if err := sendEvent("done", payload); err != nil {
+		h.completeIdempotencyEntry(cacheKey, entry, message, nil, "", err)
+		return
+	}
+	h.completeIdempotencyEntry(cacheKey, entry, message, aiMessage, title, nil)
+	return
+}
+
+func prepareSSE(c *gin.Context) (func(string, interface{}) error, bool) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
-		return
+		return nil, false
 	}
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -403,72 +499,72 @@ func (h *Handler) captureInput(c *gin.Context) {
 		flusher.Flush()
 		return nil
 	}
-	// Send request
-	if err := sendEvent("ack", gin.H{
-		"message": gin.H{
-			"id":         message.ID,
-			"user_id":    message.UserID,
-			"session_id": message.SessionID,
-			"role":       message.Role,
-			"content":    message.Content,
-			"created_at": message.CreatedAt,
-		},
-	}); err != nil {
+	return sendEvent, true
+}
+
+func messagePayload(msg *models.Message) gin.H {
+	if msg == nil {
+		return nil
+	}
+	return gin.H{
+		"id":         msg.ID,
+		"user_id":    msg.UserID,
+		"session_id": msg.SessionID,
+		"role":       msg.Role,
+		"content":    msg.Content,
+		"created_at": msg.CreatedAt,
+	}
+}
+
+func (h *Handler) beginIdempotencyEntry(sessionID int64, clientID string) (*idempotencyEntry, string, bool) {
+	key := fmt.Sprintf("%d:%s", sessionID, clientID)
+	h.clientMessageMu.Lock()
+	defer h.clientMessageMu.Unlock()
+	if entry, ok := h.clientMessageTable[key]; ok {
+		return entry, key, false
+	}
+	entry := newIdempotencyEntry()
+	h.clientMessageTable[key] = entry
+	return entry, key, true
+}
+
+func (h *Handler) completeIdempotencyEntry(key string, entry *idempotencyEntry, userMsg, aiMsg *models.Message, title string, err error) {
+	if entry == nil {
 		return
 	}
-	// Stream sent
-	streamReq := worker.StreamRequest{
-		SessionRequest: worker.SessionRequest{
-			Context:   streamCtx,
-			UserID:    userID,
-			SessionID: req.SessionID,
-			Provider:  req.Provider,
-			Model:     req.ModelType,
-			Token:     token,
-			Files:     files,
-			Message:   message,
-		},
-		ChunkFn: func(chunk string) error {
-			return sendEvent("stream", gin.H{"content": chunk})
-		},
-	}
-	aiMessage, title, err := h.workers.Stream(streamReq)
-	if err != nil {
-		msg := err.Error()
-		if errors.Is(err, worker.ErrDispatcherBusy) {
-			msg = "server is busy, please retry"
-		}
-		_ = sendEvent("error", gin.H{"message": msg})
+	entry.once.Do(func() {
+		entry.userMsg = userMsg
+		entry.aiMsg = aiMsg
+		entry.title = title
+		entry.err = err
+		close(entry.done)
+	})
+	h.clientMessageMu.Lock()
+	delete(h.clientMessageTable, key)
+	h.clientMessageMu.Unlock()
+}
+
+func (h *Handler) respondWithCachedResult(c *gin.Context, entry *idempotencyEntry) {
+	sendEvent, ok := prepareSSE(c)
+	if !ok {
 		return
 	}
-	_, err = h.assistant.AppendMessageToSession(c.Request.Context(), aiMessage.UserID, aiMessage.SessionID, aiMessage.Role, aiMessage.Content)
-	if err != nil {
-		_ = sendEvent("error", gin.H{"message": err.Error()})
+	entry.wait()
+	if entry.err != nil {
+		_ = sendEvent("error", gin.H{"message": entry.err.Error()})
 		return
+	}
+	if entry.userMsg != nil {
+		_ = sendEvent("ack", gin.H{"message": messagePayload(entry.userMsg)})
 	}
 	payload := gin.H{
-		"user_message": gin.H{
-			"id":         message.ID,
-			"user_id":    message.UserID,
-			"session_id": message.SessionID,
-			"role":       message.Role,
-			"content":    message.Content,
-			"created_at": message.CreatedAt,
-		},
-		"ai_message": gin.H{
-			"id":         aiMessage.ID,
-			"user_id":    aiMessage.UserID,
-			"session_id": aiMessage.SessionID,
-			"role":       aiMessage.Role,
-			"content":    aiMessage.Content,
-			"created_at": aiMessage.CreatedAt,
-		},
+		"user_message": messagePayload(entry.userMsg),
+		"ai_message":   messagePayload(entry.aiMsg),
 	}
-	if title != "" {
-		payload["title"] = title
+	if entry.title != "" {
+		payload["title"] = entry.title
 	}
 	_ = sendEvent("done", payload)
-	return
 }
 
 // handle api token

@@ -36,7 +36,7 @@ UnichatGo is a conversational application powered by a Go backend and a Vue 3 fr
 ```
 
 ## Backend Highlights
-- Go 1.24+, SQLite/MySQL storage, Redis listener and cache.
+- Go 1.24+, SQLite/MySQL storage, optional Redis cache (auth tokens + worker state) and in-memory idempotency.
 - Auth: login issues HttpOnly cookies + CSRF tokens; supports logout and account deletion.
 - Conversations:
   - `POST /users/:id/conversation/start`: create or resume a session (auto-titles first message).

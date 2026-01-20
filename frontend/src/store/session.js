@@ -18,6 +18,13 @@ const PROVIDERS = {
   claude: ['claude-sonnet-4-5', 'claude-haiku-4-5','claude-opus-4-5','claude-opus-4-1'],
 }
 
+function createClientMessageId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 function normalizeSession(session) {
   return {
     id: session.sessionId ?? session.id,
@@ -41,6 +48,7 @@ export const useSessionStore = defineStore('session', () => {
   const tokensLoaded = ref(false)
   const attachmentsBySession = ref({})
   const uploading = ref(false)
+  const clientMessageStates = ref({})
   const hasToken = computed(() => {
     if (!tokensLoaded.value) return true
     return providerTokens.value.some((item) => item.provider === provider.value)
@@ -84,6 +92,16 @@ export const useSessionStore = defineStore('session', () => {
         URL.revokeObjectURL(item.preview)
       }
     })
+  }
+
+  function setClientMessageState(clientMsgId, patch) {
+    clientMessageStates.value = {
+      ...clientMessageStates.value,
+      [clientMsgId]: {
+        ...(clientMessageStates.value[clientMsgId] || {}),
+        ...patch,
+      },
+    }
   }
 
   function upsertSession(data) {
@@ -175,16 +193,17 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function sendMessage(content) {
+  async function sendMessage(content, clientMsgId) {
     if (!content || !content.trim()) {
       throw new Error('Message cannot be empty')
     }
     const authStore = useAuthStore()
     if (!authStore.user) throw new Error('Authentication required')
-    if (sending.value) {
+    if (sending.value && !clientMsgId) {
       throw new Error('Previous message is still in progress')
     }
     sending.value = true
+    const resolvedClientMsgId = clientMsgId || createClientMessageId()
     let sessionId = currentSessionId.value
     if (!sessionId) {
       sessionId = await createSession()
@@ -201,7 +220,7 @@ export const useSessionStore = defineStore('session', () => {
     }))
     let tempAssistantIndex = -1
     let assistantBuffer = ''
-
+    setClientMessageState(resolvedClientMsgId, { status: 'pending', sessionId })
     try {
       await streamConversation(
         authStore.user.id,
@@ -211,9 +230,14 @@ export const useSessionStore = defineStore('session', () => {
           provider: provider.value,
           model_type: model.value,
           file_ids: attachments.map((item) => item.id),
+          client_msg_id: resolvedClientMsgId,
         },
         {
           onAck: (payload) => {
+            setClientMessageState(resolvedClientMsgId, {
+              status: 'acknowledged',
+              user_message_id: payload.message.id,
+            })
             userMessages.push({
               id: payload.message.id,
               role: payload.message.role,
@@ -260,8 +284,18 @@ export const useSessionStore = defineStore('session', () => {
             }
             clearAttachmentPreviews(sessionId)
             setAttachments(sessionId, [])
+            setClientMessageState(resolvedClientMsgId, {
+              status: 'completed',
+              user_message_id: payload.user_message.id,
+              ai_message_id: payload.ai_message.id,
+              title: payload.title || null,
+            })
           },
           onError: (payload) => {
+            setClientMessageState(resolvedClientMsgId, {
+              status: 'error',
+              error: payload?.message || 'Unknown error',
+            })
             if (typeof payload?.message === 'string' && payload.message.includes('api token not configured')) {
               markTokenMissing(provider.value)
               tokenDialogVisible.value = true
@@ -272,6 +306,15 @@ export const useSessionStore = defineStore('session', () => {
           },
         },
       )
+      return resolvedClientMsgId
+    } catch (err) {
+      setClientMessageState(resolvedClientMsgId, {
+        status: 'error',
+        error: err.message || 'Failed to send message',
+      })
+      console.error(err)
+      ElMessage.error(err.message || 'Failed to send message')
+      throw err
     } finally {
       sending.value = false
       clearAttachmentPreviews(sessionId)
@@ -384,6 +427,7 @@ export const useSessionStore = defineStore('session', () => {
     sessions,
     loadingSessions,
     sending,
+    clientMessageStates,
     currentSessionId,
     currentMessages,
     currentSessionTitle,

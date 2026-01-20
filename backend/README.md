@@ -7,6 +7,7 @@ Go-based API server that powers user authentication, session management, and str
 - API key management per provider (e.g., OpenAI) with validation before invoking AI.
 - Conversation lifecycle: list sessions, start or resume, delete, and auto-generate titles after the first message.
 - Streaming `/conversation/msg` endpoint that emits `ack`, `stream`, `done`, and optional `error` events.
+- Idempotent client requests: each `POST /conversation/msg` must include a `client_msg_id`, and repeated calls with the same ID reuse the cached response.
 - SQLite schema and migrations baked into the binary; no external database required by default.
 - Optional Redis cache used for bearer-token/worker state storage (defaults to disabled; enable via `redis` config block and Docker Compose).
 
@@ -155,7 +156,7 @@ curl -s -X POST "$BASE/api/users/$USER_ID/conversation/start" \
 curl -N -X POST "$BASE/api/users/$USER_ID/conversation/msg" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $AUTH_TOKEN" \
-  -d '{"session_id":SESSION_ID,"provider":"openai","model_type":"gpt-5-nano","content":"Hello"}'
+  -d '{"session_id":SESSION_ID,"provider":"openai","model_type":"gpt-5-nano","client_msg_id":"msg-123","content":"Hello"}'
 ```
 
 ### Streaming Events

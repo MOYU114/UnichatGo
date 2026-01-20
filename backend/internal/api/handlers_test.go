@@ -92,6 +92,7 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 			"content":    firstMessage,
 			"provider":   provider,
 			"model_type": "gpt-5-nano",
+			"client_msg_id": "client-msg-1",
 		},
 		nil,
 	)
@@ -168,6 +169,7 @@ func TestHandlersEndToEndFlow(t *testing.T) {
 			"content":    secondMessage,
 			"provider":   provider,
 			"model_type": "gpt-5-mini",
+			"client_msg_id": "client-msg-2",
 		},
 		nil,
 	)
@@ -297,14 +299,14 @@ func TestCaptureInputValidation(t *testing.T) {
 	// Missing session id
 	resp := client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/msg", userID),
-		map[string]any{"session_id": 0, "content": "hi", "provider": "openai", "model_type": "gpt"},
+		map[string]any{"session_id": 0, "content": "hi", "provider": "openai", "model_type": "gpt", "client_msg_id": "client-msg-3"},
 		nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 
 	// Empty content
 	resp = client.DoJSON(http.MethodPost,
 		fmt.Sprintf("/api/users/%d/conversation/msg", userID),
-		map[string]any{"session_id": body.SessionID, "content": "   ", "provider": "openai", "model_type": "gpt"},
+		map[string]any{"session_id": body.SessionID, "content": "   ", "provider": "openai", "model_type": "gpt", "client_msg_id": "client-msg-4"},
 		nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 
@@ -362,6 +364,7 @@ func TestCaptureInputSSEError(t *testing.T) {
 			"content":    "hello",
 			"provider":   "openai",
 			"model_type": "gpt",
+			"client_msg_id": "client-msg-5",
 		},
 		nil,
 	)
@@ -410,6 +413,7 @@ func TestCaptureInputBackpressure(t *testing.T) {
 			"content":    "hello again",
 			"provider":   "openai",
 			"model_type": "gpt",
+			"client_msg_id": "client-msg-6",
 		},
 		nil,
 	)
