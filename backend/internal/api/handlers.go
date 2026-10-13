@@ -17,6 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"unichatgo/internal/auth"
+	"unichatgo/internal/config"
+	"unichatgo/internal/execution"
 	"unichatgo/internal/models"
 	"unichatgo/internal/redis"
 	"unichatgo/internal/service/assistant"
@@ -51,11 +53,13 @@ func (e *idempotencyEntry) wait() {
 
 // Handler wires HTTP routes to the assistant service and manages per-user AI workers.
 type Handler struct {
-	assistant *assistant.Service
-	auth      *auth.Service
-	workers   WorkerManager
-	fileBase  string
-	fileTTL   time.Duration
+	assistant   *assistant.Service
+	auth        *auth.Service
+	workers     WorkerManager
+	fileBase    string
+	fileTTL     time.Duration
+	execution   *execution.Repository
+	asyncConfig *config.Config
 
 	clientMessageMu    sync.Mutex
 	clientMessageTable map[string]*idempotencyEntry
@@ -106,6 +110,9 @@ func (h *Handler) authorizedUserID(c *gin.Context) (int64, bool) {
 // RegisterRoutes attaches all HTTP routes to the router.
 func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
+	api.GET("/capabilities", func(c *gin.Context) {
+		c.JSON(200, gin.H{"async_execution": h.execution != nil, "attachment_namespace": "shared-v1"})
+	})
 	api.POST("/users/register", h.registerUser)
 	api.POST("/users/login", h.loginUser)
 	authMW := h.auth.Middleware()
@@ -119,6 +126,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	userRoutes.DELETE("/conversation/sessions/:session_id", h.deleteSession)
 	userRoutes.GET("/conversation/sessions/:session_id/messages", h.getSessionMessages)
 	userRoutes.POST("/conversation/msg", h.captureInput)
+	userRoutes.POST("/conversation/requests/:request_id/resolve", h.resolveAsync)
 	userRoutes.POST("/uploads", h.filesUpload)
 	userRoutes.POST("/logout", h.logoutUser)
 	userRoutes.DELETE("", h.deleteUser)
@@ -213,6 +221,14 @@ func (h *Handler) deleteSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
 		return
 	}
+	if h.execution != nil {
+		if err := h.execution.DeleteSession(c.Request.Context(), userID, sessionID); err != nil {
+			asyncError(c, err)
+			return
+		}
+		c.Status(204)
+		return
+	}
 	if err := h.assistant.DeleteSession(c.Request.Context(), userID, sessionID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
@@ -226,6 +242,10 @@ func (h *Handler) deleteSession(c *gin.Context) {
 }
 
 func (h *Handler) startConversation(c *gin.Context) {
+	if h.execution != nil {
+		h.startAsync(c)
+		return
+	}
 	userID, ok := h.authorizedUserID(c)
 	if !ok {
 		return
@@ -290,7 +310,9 @@ func (h *Handler) logoutUser(c *gin.Context) {
 	if !ok {
 		return
 	}
-	h.workers.ResetUser(userID)
+	if h.workers != nil {
+		h.workers.ResetUser(userID)
+	}
 	if authToken, ok := auth.AuthTokenFromContext(c); ok {
 		_ = h.auth.RevokeToken(c.Request.Context(), authToken)
 	}
@@ -301,6 +323,16 @@ func (h *Handler) logoutUser(c *gin.Context) {
 func (h *Handler) deleteUser(c *gin.Context) {
 	id, ok := h.authorizedUserID(c)
 	if !ok {
+		return
+	}
+	if h.execution != nil {
+		if err := h.execution.DeleteUser(c.Request.Context(), id); err != nil {
+			asyncError(c, err)
+			return
+		}
+		_ = h.auth.RevokeUserTokens(c.Request.Context(), id)
+		h.clearAuthCookies(c)
+		c.Status(204)
 		return
 	}
 	if err := h.auth.RevokeUserTokens(c.Request.Context(), id); err != nil {
@@ -336,7 +368,20 @@ func (h *Handler) getSessionMessages(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 			return
 		}
+		if h.execution != nil {
+			asyncError(c, err)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if h.execution != nil {
+		messages, requests, err := h.execution.SnapshotHistory(c.Request.Context(), userID, sessionID)
+		if err != nil {
+			asyncError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"session": session, "messages": messages, "requests": requests, "async_enabled": true})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -347,15 +392,20 @@ func (h *Handler) getSessionMessages(c *gin.Context) {
 
 // User input interface
 type inputRequest struct {
-	SessionID   int64   `json:"session_id"`
-	Content     string  `json:"content"`
-	ModelType   string  `json:"model_type"`
-	Provider    string  `json:"provider"`
-	FileIDs     []int64 `json:"file_ids"`
-	ClientMsgID string  `json:"client_msg_id"`
+	SessionID           int64   `json:"session_id"`
+	Content             string  `json:"content"`
+	ModelType           string  `json:"model_type"`
+	Provider            string  `json:"provider"`
+	FileIDs             []int64 `json:"file_ids"`
+	ClientMsgID         string  `json:"client_msg_id"`
+	AttachmentNamespace string  `json:"attachment_namespace,omitempty"`
 }
 
 func (h *Handler) captureInput(c *gin.Context) {
+	if h.execution != nil {
+		h.captureAsync(c)
+		return
+	}
 	userID, ok := h.authorizedUserID(c)
 	if !ok {
 		return
@@ -735,6 +785,10 @@ func isAllowedContentType(ct string) bool {
 }
 
 func (h *Handler) filesUpload(c *gin.Context) {
+	if h.execution != nil {
+		h.uploadAsync(c)
+		return
+	}
 	userID, ok := h.authorizedUserID(c)
 	if !ok {
 		return

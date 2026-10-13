@@ -1,9 +1,9 @@
 {
-  "basic_config":{
+  "basic_config": {
     "server_address": ":8090",
     "min_workers": 3,
     "max_workers": 10,
-    "queue_size" : 100,
+    "queue_size": 100,
     "worker_idle_timeout_minutes": 30,
     "file_base_dir": "./data/uploads",
     "temp_file_ttl_minutes": 1440,
@@ -43,6 +43,20 @@
     "host": "${REDIS_HOST}",
     "port": 6379,
     "password": "${REDIS_PASSWD}",
-    "db_name":0
- }
+    "db_name": 0
+  },
+  "async": {
+    "enabled": false,
+    "role": "all",
+    "paused": true,
+    "workers": 4,
+    "session_queue": 8,
+    "user_queue": 32,
+    "accept_rpm": 60,
+    "task_timeout_seconds": 300,
+    "concurrency": 4,
+    "user_concurrency": 2,
+    "rpm": 60,
+    "tpm": 200000
+  }
 }

@@ -1,13 +1,15 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSessionStore } from '../../store/session'
 import { renderMarkdown } from '../../utils/markdown'
+import { describeRequest } from '../../utils/execution'
 
 const sessionStore = useSessionStore()
 const messageInput = ref('')
 const messageContainer = ref(null)
 const fileInput = ref(null)
+let composerRevision = 0
 
 const VISIBLE_WINDOW = 50
 const messages = computed(() => {
@@ -33,6 +35,8 @@ watch(messages, scrollToBottom, { deep: true })
 watch(
   () => sessionStore.currentSessionId,
   () => {
+    composerRevision += 1
+    messageInput.value = ''
     scrollToBottom()
   },
 )
@@ -42,12 +46,45 @@ async function handleSend() {
     ElMessage.warning('Please enter a message')
     return
   }
+  const content = messageInput.value
+  const revision = composerRevision
   try {
-    await sessionStore.sendMessage(messageInput.value)
-    messageInput.value = ''
+    await sessionStore.sendMessage(content)
+    if (revision === composerRevision) messageInput.value = ''
   } catch (err) {
+    // The frozen journal owns uncertain acceptance, not an editable duplicate draft.
+    if (revision === composerRevision && sessionStore.currentPending?.payload.content === content) messageInput.value = ''
     ElMessage.error(err.message || 'Failed to send message')
   }
+}
+
+async function retryAcceptance() {
+  const original = sessionStore.currentPending?.payload.content
+  try {
+    await sessionStore.retryPending()
+    if (messageInput.value === original) messageInput.value = ''
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
+async function abandon(request) {
+  let reason
+  try {
+    const result = await ElMessageBox.prompt(
+      'The provider may already have executed and charged this request. Abandoning does not cancel or refund it. A new request may duplicate work and charges. Enter a reason for the audit log; resolution is allowed only after the old execution lease expires.',
+      'Abandon uncertain execution', {
+        confirmButtonText: 'I understand - abandon', cancelButtonText: 'Keep blocked',
+        inputValidator: (value) => Boolean(value?.trim()) || 'A reason is required', type: 'warning',
+      },
+    )
+    reason = result.value
+  } catch { return }
+  try { await sessionStore.abandonRequest(request.request_id, reason) } catch (error) { ElMessage.error(error.message) }
+}
+
+async function refreshHistory() {
+  try { await sessionStore.refreshHistory() } catch (error) { ElMessage.error(error.message) }
 }
 
 function handleEnterKey(event) {
@@ -121,6 +158,24 @@ function handleRemoveAttachment(fileId) {
     </header>
 
     <div ref="messageContainer" class="chat-panel__messages">
+      <div v-if="sessionStore.asyncEnabled" class="execution-notice" role="status">
+        Replies are saved in the background. Refreshing or closing this page does not cancel accepted requests.
+        <span v-if="sessionStore.historyConnection === 'connected'"> History connected.</span>
+        <span v-else-if="sessionStore.historyConnection === 'connecting'"> Connecting to history...</span>
+      </div>
+      <el-alert v-if="sessionStore.historyError" title="History connection unavailable - this is not an execution failure" type="warning" :closable="false" show-icon>
+        <p>{{ sessionStore.historyError }}</p>
+        <p>{{ sessionStore.historyConnection === 'paused' ? 'Automatic observation paused after repeated errors.' : 'Reconnecting with backoff. Displayed execution states may be stale.' }}</p>
+        <el-button size="small" @click="refreshHistory">Reconnect / refresh history</el-button>
+      </el-alert>
+      <el-alert v-if="sessionStore.journalError" :title="sessionStore.journalError" type="error" :closable="false" />
+      <el-alert v-if="sessionStore.currentPending" title="Acceptance not yet confirmed" type="warning" :closable="false" show-icon>
+        <p>The saved message may already have been accepted. Do not send it with a new ID. History will reconcile it; retry sends exactly the same saved payload and ID.</p>
+        <p class="pending-content">{{ sessionStore.currentPending.payload.content }}</p>
+        <p v-if="sessionStore.currentPending.error">{{ sessionStore.currentPending.error }}</p>
+        <el-button size="small" :loading="sending" :disabled="sending || !sessionStore.asyncEnabled" @click="retryAcceptance">Retry saved acceptance</el-button>
+        <el-button size="small" @click="refreshHistory">Check history</el-button>
+      </el-alert>
       <el-empty v-if="!messages.length" description="Start the first conversation" />
       <el-alert
         v-if="!sessionStore.hasToken"
@@ -155,6 +210,14 @@ function handleRemoveAttachment(fileId) {
           </div>
         </div>
       </div>
+      <section v-if="sessionStore.currentRequests.length" class="execution-list" aria-label="Execution status" aria-live="polite">
+        <div v-for="request in sessionStore.currentRequests" :key="request.request_id" class="execution-status" :class="`execution-status--${request.state}`">
+          <strong>Request #{{ request.sequence }} - {{ request.state }}</strong>
+          <p>{{ describeRequest(request) }}</p>
+          <small>{{ request.request_id }}</small>
+          <el-button v-if="request.state === 'uncertain'" type="warning" size="small" :loading="sessionStore.resolving" @click="abandon(request)">Review and abandon</el-button>
+        </div>
+      </section>
     </div>
 
     <footer class="chat-panel__composer">
@@ -187,7 +250,7 @@ function handleRemoveAttachment(fileId) {
         v-model="messageInput"
         type="textarea"
         :rows="3"
-        :disabled="sending"
+        :disabled="sessionStore.sendBlocked"
         placeholder="Ask anything..."
         @keydown.enter.stop.prevent="handleEnterKey"
         @keydown.shift.enter.stop
@@ -196,7 +259,7 @@ function handleRemoveAttachment(fileId) {
         <el-button
           class="composer__attach"
           :loading="uploading"
-          :disabled="uploading || sending"
+          :disabled="sessionStore.sendBlocked"
           @click="triggerFilePicker"
         >
           Attach files
@@ -205,7 +268,7 @@ function handleRemoveAttachment(fileId) {
           type="primary"
           class="composer__send"
           :loading="sending"
-          :disabled="sending"
+          :disabled="sessionStore.sendBlocked"
           @click="handleSend"
         >
           Send
@@ -216,6 +279,18 @@ function handleRemoveAttachment(fileId) {
 </template>
 
 <style scoped>
+.execution-notice, .execution-status {
+  font-size: 0.85rem;
+  color: #4b5563;
+  line-height: 1.5;
+}
+.execution-list { display: grid; gap: 0.5rem; }
+.execution-status { padding: 0.75rem; border-left: 3px solid #94a3b8; background: #f1f5f9; }
+.execution-status p { margin: 0.25rem 0; }
+.execution-status small { display: block; overflow-wrap: anywhere; }
+.execution-status--failed, .execution-status--uncertain { border-color: #b45309; background: #fffbeb; }
+.execution-status--completed { border-color: #059669; }
+.pending-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 8rem; overflow-y: auto; }
 .chat-panel {
   flex: 1;
   display: flex;
@@ -413,5 +488,10 @@ function handleRemoveAttachment(fileId) {
 .composer__attach,
 .composer__send {
   min-width: 110px;
+}
+@media (max-width: 600px) {
+  .control-select { width: min(40vw, 160px); }
+  .chat-panel__messages { padding: 0.75rem; }
+  .message { max-width: 94%; overflow-wrap: anywhere; }
 }
 </style>

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -22,7 +23,11 @@ func (s *Service) Middleware() gin.HandlerFunc {
 		}
 		userID, err := s.ValidateToken(c.Request.Context(), authToken)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			status, code := http.StatusServiceUnavailable, "authentication_unavailable"
+			if errors.Is(err, ErrInvalidToken) {
+				status, code = http.StatusUnauthorized, "invalid_token"
+			}
+			c.AbortWithStatusJSON(status, gin.H{"error": code})
 			return
 		}
 		c.Set(userIDContextKey, userID)

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
@@ -18,6 +18,7 @@ const username = computed(() => authStore.user?.username || 'User')
 onMounted(() => {
   sessionStore.loadSessions()
 })
+onBeforeUnmount(() => sessionStore.suspend())
 
 async function handleLogout() {
   await authStore.logout()
@@ -34,9 +35,13 @@ async function handleDeleteAccount() {
   } catch {
     return
   }
-  await authStore.removeAccount()
-  ElMessage.success('Account deleted')
-  router.replace({ name: 'register' })
+  try {
+    await authStore.removeAccount()
+    ElMessage.success('Account deleted')
+    router.replace({ name: 'register' })
+  } catch (error) {
+    ElMessage.error(error.response?.data?.error || error.message || 'Account deletion failed. Resolve active or uncertain requests first.')
+  }
 }
 </script>
 

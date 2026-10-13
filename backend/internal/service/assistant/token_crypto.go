@@ -4,7 +4,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +20,26 @@ var errInvalidCiphertext = errors.New("invalid token ciphertext")
 
 type tokenCipher struct {
 	aead cipher.AEAD
+}
+
+// SealExecution freezes credentials without putting plaintext in the queue.
+func (s *Service) SealExecution(plain string) (string, error) {
+	return s.cipher.Encrypt(plain)
+}
+
+// OpenExecution never applies the legacy plaintext-token compatibility fallback.
+func (s *Service) OpenExecution(sealed string) (string, error) {
+	return s.cipher.Decrypt(sealed)
+}
+
+// ExecutionKeyFingerprint binds all cluster roles to the same decryption key.
+func ExecutionKeyFingerprint() (string, error) {
+	key, err := decodeKey(strings.TrimSpace(os.Getenv(apiTokenKeyEnv)))
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(key)
+	return hex.EncodeToString(hash[:]), nil
 }
 
 func newTokenCipherFromEnv() (*tokenCipher, error) {
