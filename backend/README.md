@@ -1,3 +1,20 @@
+## Async execution implementation checkpoint (2026-10-12)
+
+An opt-in, MySQL-only async path now provides SQL-first acceptance, compact
+execution evidence, transactional Outbox, Redis Streams workers, durable history,
+global quotas and shared attachment storage. `async.enabled` defaults to false;
+the example additionally keeps acceptance paused. This is **not production-ready
+feature parity**: Agent/tool/summary and historical attachment behavior, capacity,
+full-service disaster recovery and rollout gates remain open. Do not enable the
+new mode for production based only on the automated tests.
+
+See `../docs/roadmap/implementation-checkpoint-2026-10-12.md` for actual test and
+review results, `../docs/roadmap/async-operations.md` for API/worker roles and safe
+drain/rollback, and `../docs/roadmap/async-test-runbook.md` for isolated verification.
+The following legacy sections describe the original path unless stated otherwise.
+
+---
+
 # UnichatGo Backend
 
 Go-based API server that powers user authentication, session management, and streaming AI conversations for Unichat. The backend stores conversations in SQLite, issues auth tokens, and streams assistant output over Server-Sent Events so the UI can render incremental responses while the LLM finishes thinking.

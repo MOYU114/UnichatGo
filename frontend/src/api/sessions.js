@@ -1,13 +1,38 @@
 import http from './http'
 import { getAPIBase, getCSRFCookie } from '../utils/csrf'
+import { consumeSSE } from '../utils/sse'
 
 export async function listSessions(userId) {
   const { data } = await http.post(`/users/${userId}/conversation/session-list`, {})
   return data.session_list || []
 }
 
-export async function fetchSessionMessages(userId, sessionId) {
-  const { data } = await http.get(`/users/${userId}/conversation/sessions/${sessionId}/messages`)
+export async function fetchSessionMessages(userId, sessionId, signal) {
+  const { data } = await http.get(`/users/${userId}/conversation/sessions/${sessionId}/messages`, { signal })
+  return data
+}
+
+export async function fetchCapabilities() {
+  try {
+    const { data } = await http.get('/capabilities')
+    if (typeof data?.async_execution !== 'boolean') throw new Error('Invalid server capabilities')
+    if (data.async_execution && data.attachment_namespace !== 'shared-v1') throw new Error('Unsupported server attachment namespace; sending is disabled')
+    return data
+  } catch (error) {
+    if (error.response?.status === 404) return { async_execution: false }
+    throw error
+  }
+}
+
+export async function acceptConversation(userId, payload) {
+  const { data } = await http.post(`/users/${userId}/conversation/msg`, payload)
+  return data
+}
+
+export async function resolveRequest(userId, requestId, reason) {
+  const { data } = await http.post(`/users/${userId}/conversation/requests/${encodeURIComponent(requestId)}/resolve`, {
+    action: 'abandon', reason,
+  })
   return data
 }
 
@@ -33,29 +58,11 @@ export async function streamConversation(userId, payload, handlers = {}) {
     body: JSON.stringify(payload),
   })
 
-  if (!response.ok || !response.body) {
-    throw new Error('Unable to send message')
+  if (!response.ok || !response.body) throw new Error('Unable to send message')
+  if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+    throw new Error('Server execution mode changed. Recover history before retrying.')
   }
-
-  const decoder = new TextDecoder()
-  const reader = response.body.getReader()
-  let buffer = ''
-
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let separatorIndex
-    while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
-      const chunk = buffer.slice(0, separatorIndex).trim()
-      buffer = buffer.slice(separatorIndex + 2)
-      if (!chunk) {
-        continue
-      }
-      const { event, data } = parseSSEChunk(chunk)
-      dispatchEvent(event, data, handlers)
-    }
-  }
+  await consumeSSE(response.body, handlers)
 }
 
 export async function uploadSessionFile(userId, sessionId, file) {
@@ -80,44 +87,4 @@ export async function uploadSessionFile(userId, sessionId, file) {
     throw new Error(message || 'Upload failed')
   }
   return response.json()
-}
-
-function parseSSEChunk(chunk) {
-  let event = ''
-  let data = ''
-  chunk.split('\n').forEach((line) => {
-    if (line.startsWith('event:')) {
-      event = line.replace('event:', '').trim()
-    } else if (line.startsWith('data:')) {
-      data += line.replace('data:', '').trim()
-    }
-  })
-  let parsed = null
-  if (data) {
-    try {
-      parsed = JSON.parse(data)
-    } catch {
-      parsed = data
-    }
-  }
-  return { event, data: parsed }
-}
-
-function dispatchEvent(event, payload, handlers) {
-  switch (event) {
-    case 'ack':
-      handlers.onAck?.(payload)
-      break
-    case 'stream':
-      handlers.onStream?.(payload)
-      break
-    case 'done':
-      handlers.onDone?.(payload)
-      break
-    case 'error':
-      handlers.onError?.(payload)
-      break
-    default:
-      break
-  }
 }

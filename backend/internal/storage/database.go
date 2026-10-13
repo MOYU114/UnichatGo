@@ -1,13 +1,15 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"unichatgo/internal/config"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -45,7 +47,21 @@ func Open(dbType string, cfg *config.Config) (*sql.DB, error) {
 			dbCfg.DBName,
 			dbCfg.Params,
 		)
-		db, err = sql.Open("mysql", dsn)
+		parsed, parseErr := mysql.ParseDSN(dsn)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid mysql config: %w", parseErr)
+		}
+		parsed.ParseTime = true
+		if parsed.Timeout == 0 {
+			parsed.Timeout = 5 * time.Second
+		}
+		if parsed.ReadTimeout == 0 {
+			parsed.ReadTimeout = 10 * time.Second
+		}
+		if parsed.WriteTimeout == 0 {
+			parsed.WriteTimeout = 10 * time.Second
+		}
+		db, err = sql.Open("mysql", parsed.FormatDSN())
 		if err != nil {
 			return nil, fmt.Errorf("open mysql database: %w", err)
 		}
@@ -53,10 +69,15 @@ func Open(dbType string, cfg *config.Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("unsupported driver: %s", dbType)
 	}
 
-	if err := db.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
+	db.SetMaxOpenConns(12)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	return db, nil
 }
 

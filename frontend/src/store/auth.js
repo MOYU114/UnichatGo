@@ -98,11 +98,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function removeAccount() {
     if (!user.value) return
-    try {
-      await deleteUser(user.value.id)
-    } finally {
-      persistProfile(null)
-    }
+    await deleteUser(user.value.id)
+    persistProfile(null)
   }
 
   if (typeof window !== 'undefined') {

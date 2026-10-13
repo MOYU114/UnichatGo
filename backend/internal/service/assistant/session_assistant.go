@@ -79,7 +79,7 @@ func (s *Service) GetSessionWithMessages(ctx context.Context, userID, sessionID 
 	}
 	defer rows.Close()
 
-	var messages []*models.Message
+	messages := make([]*models.Message, 0)
 	for rows.Next() {
 		m := new(models.Message)
 		if err := rows.Scan(&m.ID, &m.UserID, &m.SessionID, &m.Role, &m.Content, &m.CreatedAt); err != nil {

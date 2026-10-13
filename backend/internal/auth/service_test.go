@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"os"
 	"strconv"
@@ -131,10 +132,15 @@ func TestAuthTokenCacheUsesRedis(t *testing.T) {
 		t.Fatalf("expected user 10 in rdb, got %s", got)
 	}
 
-	_, _ = db.Exec(`DELETE FROM user_tokens WHERE token = ?`, token)
+	if _, err = db.Exec(`DELETE FROM user_tokens WHERE token = ?`, token); err != nil {
+		t.Fatal(err)
+	}
 	userID, err := svc.ValidateToken(ctx, token)
-	if err != nil || userID != 10 {
-		t.Fatalf("ValidateToken via rdb failed: id=%d err=%v", userID, err)
+	if !errors.Is(err, ErrInvalidToken) || userID != 0 {
+		t.Fatalf("stale Redis token bypassed SQL revocation: id=%d err=%v", userID, err)
+	}
+	if cached, err := raw.Get(ctx, key).Result(); err != nil || cached != "10" {
+		t.Fatalf("test did not retain stale cache evidence: %q %v", cached, err)
 	}
 
 	if err := svc.RevokeToken(ctx, token); err != nil {

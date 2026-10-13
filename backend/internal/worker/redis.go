@@ -45,9 +45,18 @@ func (r *stateRedis) startListener(handler func(invalidateMessage)) {
 	if raw == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	pubsub := raw.Subscribe(ctx, redisInvalidateChannel)
+	// Observe the subscription acknowledgement before exposing a listener that
+	// callers may immediately publish to; launching a goroutine is not readiness.
+	if _, err := pubsub.Receive(ctx); err != nil {
+		_ = pubsub.Close()
+		log.Printf("worker invalidation subscribe failed: %v", err)
+		return
+	}
 	go func() {
-		ctx := context.Background()
-		pubsub := raw.Subscribe(ctx, redisInvalidateChannel)
+		defer pubsub.Close()
 		ch := pubsub.Channel()
 		// use sub chan to receive msg
 		for msg := range ch {

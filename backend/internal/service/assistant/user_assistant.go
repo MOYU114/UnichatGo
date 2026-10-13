@@ -19,6 +19,8 @@ type Service struct {
 	cipher *tokenCipher
 }
 
+var ErrProviderTokenMissing = errors.New("api token not configured")
+
 // TokenInfo describes a stored provider token without exposing the secret value.
 type TokenInfo struct {
 	Provider  string    `json:"provider"`
@@ -147,7 +149,7 @@ func (s *Service) EnsureAIReady(ctx context.Context, userID int64, provider stri
 	}
 	// Must have api token.
 	if token == "" {
-		return "", errors.New("api token not configured")
+		return "", ErrProviderTokenMissing
 	}
 	return token, nil
 }

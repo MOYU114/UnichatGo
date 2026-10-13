@@ -25,6 +25,8 @@ type Service struct {
 	csrfHeaderName string
 }
 
+var ErrInvalidToken = errors.New("invalid or expired token")
+
 const redisTokenPrefix = "auth:token:"
 
 // NewService constructs an auth service with the supplied token lifetime.
@@ -76,11 +78,10 @@ func (s *Service) NewCSRFToken() (string, error) {
 // ValidateToken verifies the token exists and has not expired, returning the user id.
 func (s *Service) ValidateToken(ctx context.Context, authToken string) (int64, error) {
 	if authToken == "" {
-		return 0, errors.New("token required")
+		return 0, ErrInvalidToken
 	}
-	if userID, ok := s.lookupCacheToken(ctx, authToken); ok {
-		return userID, nil
-	}
+	// Revocation and account deletion are SQL facts. A stale Redis entry must
+	// never authorize a request after the token/user has been removed.
 	var userID int64
 	var expires time.Time
 	err := s.db.QueryRowContext(ctx,
@@ -88,14 +89,14 @@ func (s *Service) ValidateToken(ctx context.Context, authToken string) (int64, e
 	).Scan(&userID, &expires)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, errors.New("invalid token")
+			return 0, ErrInvalidToken
 		}
 		return 0, fmt.Errorf("lookup token: %w", err)
 	}
 	if time.Now().UTC().After(expires) {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM user_tokens WHERE token = ?`, authToken)
 		s.deleteCacheToken(ctx, authToken)
-		return 0, errors.New("token expired")
+		return 0, ErrInvalidToken
 	}
 	s.cacheToken(ctx, authToken, userID, time.Until(expires))
 	return userID, nil
